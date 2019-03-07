@@ -1,0 +1,8 @@
+lib: [
+  "_build/install/default/lib/randomizer-engine/META" {"META"}
+  "_build/install/default/lib/randomizer-engine/dune-package" {"dune-package"}
+  "_build/install/default/lib/randomizer-engine/opam" {"opam"}
+]
+bin: [
+  "_build/install/default/bin/randomizer-engine" {"randomizer-engine"}
+]
