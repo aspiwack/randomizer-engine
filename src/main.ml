@@ -71,18 +71,7 @@ let invert_array (arr : atom Provable.timed array) : int TimedAtomMap.t =
   Array.to_seqi arr |>
   Seq.fold_left (fun acc (i,a) -> TimedAtomMap.add a (i+1) acc) TimedAtomMap.empty
 
-(* XXX: This uses Bdd.set_max_var which is not at all a safe thing to
-   do! If I use the function twice, it will destroy the previous
-   bdd. *)
-let compile_formula (f : atom Provable.timed Formula.t) : MLBDD.t * atom Provable.timed array =
-  let _ = Format.printf "Compiling formula@." in
-  let atoms =
-    Formula.vars f |> TimedAtomSet.of_seq |> TimedAtomSet.to_seq |> Array.of_seq
-  in
-  let _ = Format.printf "Done collecting atoms@." in
-  let _ = Format.printf "Num atoms: %i@." (Formula.vars f |> OSeq.length) in
-  let var_index = invert_array atoms in
-  let man = MLBDD.init () in
+let compile_formula man var_index (f : atom Provable.timed Formula.t) : MLBDD.t =
   let mk_var (a : atom Provable.timed) : MLBDD.t = MLBDD.ithvar man (TimedAtomMap.find a var_index) in
   let rec compile = let open Formula in function
     | Zero -> MLBDD.dfalse man
@@ -93,10 +82,9 @@ let compile_formula (f : atom Provable.timed Formula.t) : MLBDD.t * atom Provabl
     | Impl (x,y) -> MLBDD.imply (compile x) (compile y)
     | Not x -> anot (compile x)
   in
-  let _ = Format.printf "Done compiling formula@." in
   let _ = Format.printf "%t@." (Formula.pp (fun a fmt -> Format.fprintf fmt "%s" (print_timed_atom a)) f) in
   (* assert false *)
-  compile f, atoms
+  compile f
 
 let collect_program_atoms (p : program) : AtomSet.t =
   let atoms : atom Seq.t =
@@ -117,11 +105,6 @@ let gen_rule_name : unit -> string =
 (* XXX: remove?*)
 module AtomMap = Map.Make (struct type t = atom let compare = compare end)
 
-(* XXX: remove?*)
-let invert_array (arr : atom array) : int AtomMap.t =
-  Array.to_seqi arr |>
-  Seq.fold_left (fun acc (i,a) -> AtomMap.add a (i+1) acc) AtomMap.empty
-
 type formula = atom Provable.timed Formula.t
 
 (* XXX: This uses Bdd.set_max_var which is not at all a safe thing to
@@ -131,7 +114,6 @@ let compile_to_bdd (p : program) : (MLBDD.t * atom Provable.timed array) =
   let bdd_vars =
     collect_program_atoms p |> AtomSet.to_seq |> Array.of_seq
   in
-  let var_index = invert_array bdd_vars in
   (* let _ = Bdd.set_max_var (Array.length bdd_vars) in *)
   (* let var (a : atom) : formula = Formula.var (AtomMap.find a var_index) in
    * let reach (l : location) : Bdd.t = var (Reach l) in
@@ -175,7 +157,7 @@ let compile_to_bdd (p : program) : (MLBDD.t * atom Provable.timed array) =
     in
     Formula.(at_least && at_most && only)
   in
-  let ranges_formula = Formula.conj_map (range p) p.range_constraints in
+  let ranges_formula = Seq.map (range p) (List.to_seq p.range_constraints) in
   let logic_clauses = List.map clause p.logic in
   let assign_clauses =
     let _ = Format.printf "Creating assign clauses@." in
@@ -197,16 +179,27 @@ let compile_to_bdd (p : program) : (MLBDD.t * atom Provable.timed array) =
     r
   in
   let module Prove = Provable.Make(AtomMap) in
-  let provable = Prove.convert {
+  let proof_system = Prove.convert {
       clauses = logic_clauses @ assign_clauses;
       goal = p.goal
   }
   in
   let _ = Format.printf "really done@." in
-  compile_formula begin
-    let open Formula in
-    ranges_formula && provable (* && goal_formula *)
-  end
+  let formulas = OSeq.append ranges_formula proof_system in
+  let atoms =
+    OSeq.(formulas >>= Formula.vars)
+    |> TimedAtomSet.of_seq
+    |> TimedAtomSet.to_seq
+    |> Array.of_seq
+  in
+  let var_index = invert_array atoms in
+  let man = MLBDD.init () in
+  formulas
+    |> Seq.map (compile_formula man var_index)
+    |> OSeq.reduce (&&&)
+  , atoms
+    (* OSeq.reduce requires that there be at least one formula. There
+       is at least the goal formula, so we're good. *)
 
 let femto_example =
   (* A bit of early Alltp logic *)
