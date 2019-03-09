@@ -39,9 +39,9 @@ type 'a program = {
 }
 
 type 'a timed =
-  | Config of 'a
   | Action of string * int
   | At of 'a * int
+  | Config of 'a
 
 module StringSet = Set.Make(struct type t=string let compare=compare end)
 
@@ -67,47 +67,47 @@ module Make (M : Map.S) = struct
       if M.mem a P.timed then Formula.var @@ At(a,i)
       else Formula.var @@ Config a
 
-    let action (i:int) (name : string) : formula =
+    let action_var (i:int) (name : string) : formula =
       Formula.var @@ Action (name,i)
 
     let name (i:int) (clause : atom clause) : formula =
-      action i clause.name
+      action_var i clause.name
 
     let steps : int Seq.t = OSeq.(0 --^ P.max_steps)
 
-    let actions (clauses : atom clause list) : formula Seq.t =
-      let _ = Format.printf "Starting actions@." in
-      let one_action (i:int) (clause : atom clause) : formula =
-        let open Formula in
-        name i clause --> ((not (at i clause.concl)) && (conj_map (at i) clause.hyps) && at (i+1) clause.concl)
-      in
-      let action (clause : atom clause) : formula Seq.t =
-        let open OSeq in
-        steps >>= fun i ->
-        return @@ one_action i clause
-      in
-      let r = Seq.flat_map action (List.to_seq clauses) in
-      let _ = Format.printf "Done actions@." in
-      r
+    let action (i:int) (clause : atom clause) : formula =
+      let open Formula in
+      name i clause --> ((not (at i clause.concl)) && (conj_map (at i) clause.hyps) && at (i+1) clause.concl)
 
-    let frames : formula Seq.t =
-      let _ = Format.printf "Starting frames@." in
+    let frames (i:int) : formula Seq.t =
       let one_frame (i:int) (a:atom) : formula =
         let open Formula in
         let changed = not (at i a) && at (i+1) a in
         let must_activate =
-          disj_map_seq (action i) (StringSet.to_seq (M.find a P.timed))
+          disj_map_seq (action_var i) (StringSet.to_seq (M.find a P.timed))
         in
         changed--> must_activate
       in
-      let frame (a:atom) : formula Seq.t =
-        let open OSeq in
-        steps >>= fun i ->
-        return @@ one_frame i a
-      in
-      let r = M.to_seq P.timed |> Seq.map fst |> Seq.flat_map frame in
-      let _ = Format.printf "Done frames@." in
-      r
+      M.to_seq P.timed |> Seq.map fst |> Seq.map (one_frame i)
+
+    (* let frames : formula Seq.t =
+     *   let _ = Format.printf "Starting frames@." in
+     *   let one_frame (i:int) (a:atom) : formula =
+     *     let open Formula in
+     *     let changed = not (at i a) && at (i+1) a in
+     *     let must_activate =
+     *       disj_map_seq (action_var i) (StringSet.to_seq (M.find a P.timed))
+     *     in
+     *     changed--> must_activate
+     *   in
+     *   let frame (a:atom) : formula Seq.t =
+     *     let open OSeq in
+     *     steps >>= fun i ->
+     *     return @@ one_frame i a
+     *   in
+     *   let r = M.to_seq P.timed |> Seq.map fst |> Seq.flat_map frame in
+     *   let _ = Format.printf "Done frames@." in
+     *   r *)
 
     (* let exclusions (clauses : atom clause list) : formula =
      *   let _ = Format.printf "Starting exclusion@." in
@@ -124,17 +124,8 @@ module Make (M : Map.S) = struct
      *   let _ = Format.printf "Done exclusions@." in
      *   r *)
 
-    let maximalisations (clauses : atom clause list) : formula Seq.t =
-      let one_maximalisation (i:int) (c:atom clause) : formula =
-        Formula.((conj_map (at i) c.hyps && not (at i c.concl))--> name i c)
-      in
-      let maximalisation (c:atom clause) : formula Seq.t =
-        let open OSeq in
-        steps >>= fun i ->
-        return @@ one_maximalisation i c
-      in
-      Seq.flat_map maximalisation (List.to_seq clauses)
-
+    let maximalisation (i:int) (c:atom clause) : formula =
+      Formula.((conj_map (at i) c.hyps && not (at i c.concl))--> name i c)
   end
 
   let convert (prog : atom program) : formula Seq.t =
@@ -147,6 +138,7 @@ module Make (M : Map.S) = struct
       M.update a upd m
     in
     let timed =
+      (* XXX: make sure the goal is timed. *)
       List.fold_left (fun acc c -> add_add c.concl c.name acc) M.empty (prog.clauses)
     in
     let max_steps = List.length (prog.clauses) in
@@ -165,13 +157,25 @@ module Make (M : Map.S) = struct
         return @@ Formula.var (At(prog.goal,i))
       end
     in
+    let steps : int Seq.t = OSeq.(0 --^ max_steps) in
     let r =
     OSeq.flatten @@ OSeq.of_list [
       OSeq.return initial_state;
       OSeq.return goal;
-      L.frames;
-      L.maximalisations (prog.clauses);
-      L.actions (prog.clauses);
+      begin
+        let open OSeq in
+        steps >>= fun i ->
+          OSeq.append
+            begin List.to_seq prog.clauses >>= fun c ->
+              OSeq.of_list [
+                L.maximalisation i c;
+                L.action i c;
+              ]
+            end
+            begin
+              L.frames i
+            end
+      end;
     ]
     in
     let _ = Format.printf "Done converting@." in

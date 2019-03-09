@@ -363,7 +363,7 @@ let print_to_dot b ~file =
   close_out c
 
 let _ =
-  let (bdd, legend) = compile_to_bdd femto_example in
+  let (bdd, legend) = compile_to_bdd mini_example in
   let _ =
     Array.to_seqi legend |>
     Seq.iter (fun (i,v) -> Format.printf "x%i: %s@." (i+1) (print_timed_atom v))
