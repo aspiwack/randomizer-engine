@@ -1,3 +1,5 @@
+open Sat
+
 (* Context:
 - we have a bunch of items, and a (larger) bunch of locations.
 - Reaching a location requires some objects, we have to achieve a goal
