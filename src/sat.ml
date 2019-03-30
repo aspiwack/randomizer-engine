@@ -15,7 +15,7 @@ module Literal (A:Atom) = struct
   type t = bool * A.t
 
   let equal (n1,a1) (n2,a2) =
-    n1 == n2 && a1 == a2
+    n1 = n2 && A.equal a1 a2
 
   let hash (n,a) = CCHash.(combine2 (bool n) (A.hash a))
 
@@ -29,8 +29,8 @@ module Literal (A:Atom) = struct
     if n then (l, Same_sign)
     else (neg l, Negated)
 
-  let one = [[]]
-  let zero = []
+  let one = []
+  let zero = [[]]
   let (&&) l r = l@r
   let (||) l r =
     List.of_seq begin
@@ -79,10 +79,22 @@ module Solver (A:Atom) (M:Map.S with type key = A.t)= struct
       M.to_seq m |> OSeq.map (fun (a,b) -> (b,a)) |> OSeq.map lit_to_formula
     end
 
+  (* Because the module Formula is overridden by the include. *)
+  let pp_formula = Formula.pp
+
+  let map_to_and_print_formula m =
+    let f = map_to_formula m in
+    Format.printf "produce: %a@." (fun fmt f -> pp_formula (fun a fmt -> A.pp fmt a) f fmt) f;
+    f
+
   include Msat.Make_pure_sat(Interface)
 
   let assume_formulas solver formulas =
-    OSeq.iter (fun f -> assume solver (Interface.Formula.cnf f) ()) formulas
+    OSeq.iter (fun f ->
+        let f' = Interface.Formula.cnf f in
+        Format.printf "assume: %a@." (fun fmt f -> pp_formula (fun a fmt -> A.pp fmt a) f fmt) f;
+        Format.printf "assume: %a@." (CCList.pp (CCList.pp  ~start:"[" ~stop:"]" Interface.Formula.pp)) f';
+        assume solver f' ()) formulas
 
   let next solver observe =
     match solve solver with
@@ -90,8 +102,13 @@ module Solver (A:Atom) (M:Map.S with type key = A.t)= struct
         M.of_seq begin
           Array.to_seq observe
           |> OSeq.filter_map begin fun a ->
-            try Some (a, sat.eval (true,a))
-            with UndecidedLit -> None
+            try
+              let v = sat.eval (true, a) in
+              let _ = Format.printf "observe: %a=%b@." A.pp a v in
+              Some (a, v)
+            with UndecidedLit ->
+              let _ = Format.printf "observe: %a undecided@." A.pp a in
+              None
           end
         end
       end
@@ -104,7 +121,7 @@ module Solver (A:Atom) (M:Map.S with type key = A.t)= struct
 
   let successive_formulas solver observe =
     OSeq.of_gen begin fun () ->
-      CCOpt.map (fun m -> assume solver [neg_clause_of_map m] (); map_to_formula m) (next solver observe)
+      CCOpt.map (fun m -> assume solver [neg_clause_of_map m] (); map_to_and_print_formula m) (next solver observe)
     end
 
 end
