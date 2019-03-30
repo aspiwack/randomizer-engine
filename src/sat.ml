@@ -62,16 +62,49 @@ module Literal (A:Atom) = struct
 
 end
 
-module Solver (A:Atom) = struct
+module Solver (A:Atom) (M:Map.S with type key = A.t)= struct
 
   module Interface = struct
     module Formula = Literal(A)
     type proof = ()
   end
 
+  (* XXX: move lit_to_formula and map_to_formula to Literal, presumably *)
+  let lit_to_formula (b,a) =
+    if b then Formula.Var a
+    else Formula.(not (Var a))
+
+  let map_to_formula m =
+    OSeq.fold Formula.(&&) Formula.One begin
+      M.to_seq m |> OSeq.map (fun (a,b) -> (b,a)) |> OSeq.map lit_to_formula
+    end
+
   include Msat.Make_pure_sat(Interface)
 
   let assume_formulas solver formulas =
     OSeq.iter (fun f -> assume solver (Interface.Formula.cnf f) ()) formulas
+
+  let next solver observe =
+    match solve solver with
+    | Sat sat -> Some begin
+        M.of_seq begin
+          Array.to_seq observe
+          |> OSeq.filter_map begin fun a ->
+            try Some (a, sat.eval (true,a))
+            with UndecidedLit -> None
+          end
+        end
+      end
+    | Unsat _ -> None
+
+  let neg_clause_of_map m =
+    List.of_seq begin
+      M.to_seq m |> OSeq.map (fun (a,b) -> (not b, a))
+    end
+
+  let successive_formulas solver observe =
+    OSeq.of_gen begin fun () ->
+      CCOpt.map (fun m -> assume solver [neg_clause_of_map m] (); map_to_formula m) (next solver observe)
+    end
 
 end
