@@ -90,39 +90,12 @@ module Make (M : Map.S) = struct
       in
       M.to_seq P.timed |> Seq.map fst |> Seq.map (one_frame i)
 
-    (* let frames : formula Seq.t =
-     *   let _ = Format.printf "Starting frames@." in
-     *   let one_frame (i:int) (a:atom) : formula =
-     *     let open Formula in
-     *     let changed = not (at i a) && at (i+1) a in
-     *     let must_activate =
-     *       disj_map_seq (action_var i) (StringSet.to_seq (M.find a P.timed))
-     *     in
-     *     changed--> must_activate
-     *   in
-     *   let frame (a:atom) : formula Seq.t =
-     *     let open OSeq in
-     *     steps >>= fun i ->
-     *     return @@ one_frame i a
-     *   in
-     *   let r = M.to_seq P.timed |> Seq.map fst |> Seq.flat_map frame in
-     *   let _ = Format.printf "Done frames@." in
-     *   r *)
-
-    (* let exclusions (clauses : atom clause list) : formula =
-     *   let _ = Format.printf "Starting exclusion@." in
-     *   let actions = List.to_seq clauses |> Seq.map (fun c -> c.name) in
-     *   let distinct_pairs =
-     *     OSeq.product actions actions |> Seq.filter (fun (a,b) -> a <> b)
-     *   in
-     *   let r = Formula.conj_seq begin
-     *     let open OSeq in
-     *     distinct_pairs >>= fun (a, b) ->
-     *     steps >>= fun i ->
-     *     return @@ Formula.(not (action i a && action i b))
-     *   end in
-     *   let _ = Format.printf "Done exclusions@." in
-     *   r *)
+    let monotonicity (i:int) : formula Seq.t =
+      let one_monotonicity (i:int) (a:atom) : formula =
+        let open Formula in
+        at i a --> at (i+1) a
+      in
+      M.to_seq P.timed |> Seq.map fst |> Seq.map (one_monotonicity i)
 
     let maximalisation (i:int) (c:atom clause) : formula =
       Formula.((conj_map (at i) c.hyps && not (at i c.concl))--> name i c)
@@ -173,7 +146,9 @@ module Make (M : Map.S) = struct
               ]
             end
             begin
-              L.frames i
+              OSeq.append
+                (L.monotonicity i)
+                (L.frames i)
             end
       end;
     ]
