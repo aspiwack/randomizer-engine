@@ -89,7 +89,7 @@ let compile_formula man var_index (f : atom Provable.timed Formula.t) : MLBDD.t 
     | Impl (x,y) -> MLBDD.imply (compile x) (compile y)
     | Not x -> anot (compile x)
   in
-  let _ = Format.printf "%t@." (Formula.pp (fun a fmt -> Format.fprintf fmt "%s" (print_timed_atom a)) f) in
+  let _ = Logs.debug (fun m -> m "%t@." (Formula.pp (fun a fmt -> Format.fprintf fmt "%s" (print_timed_atom a)) f)) in
   (* assert false *)
   compile f
 
@@ -357,11 +357,7 @@ let print_to_dot legend b ~file =
   close_out c
 
 let _ =
+  let _ = Logs.set_reporter (Logs_fmt.reporter ()) in
+  let _ = Logs.set_level (Some Logs.Debug) in
   let (bdd, legend) = compile_to_bdd example in
-  (* let _ =
-   *   Array.to_seqi legend |>
-   *   Seq.iter (fun (i,v) -> Format.printf "x%i: %s@." (i+1) (print_timed_atom v))
-   * in *)
-  Format.printf "%b@." (MLBDD.is_false bdd);
-  (* print_string @@ MLBDD.to_stringb bdd *)
   print_to_dot ~file:"example.dot" legend bdd

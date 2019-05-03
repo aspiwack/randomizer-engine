@@ -107,7 +107,7 @@ module Make (M : Map.S) = struct
   end
 
   let convert (prog : atom program) : formula Seq.t =
-    let _ = Format.printf "%i@." (List.length prog.clauses) in
+    let _ = Logs.debug (fun m -> m "%i@." (List.length prog.clauses)) in
     let add_add a n m =
       let upd = function
         | None -> Some (StringSet.singleton n)
@@ -158,7 +158,7 @@ module Make (M : Map.S) = struct
       end;
     ]
     in
-    let _ = Format.printf "Done converting@." in
+    let _ = Logs.debug (fun m -> m "Done converting@.") in
     r
 
 end
