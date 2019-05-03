@@ -84,7 +84,7 @@ module Solver (A:Atom) (M:Map.S with type key = A.t)= struct
 
   let map_to_and_print_formula m =
     let f = map_to_formula m in
-    Format.printf "produce: %a@." (fun fmt f -> pp_formula (fun a fmt -> A.pp fmt a) f fmt) f;
+    Logs.debug (fun m -> m "produce: %a@." (fun fmt f -> pp_formula (fun a fmt -> A.pp fmt a) f fmt) f);
     f
 
   include Msat.Make_pure_sat(Interface)
@@ -92,8 +92,8 @@ module Solver (A:Atom) (M:Map.S with type key = A.t)= struct
   let assume_formulas solver formulas =
     OSeq.iter (fun f ->
         let f' = Interface.Formula.cnf f in
-        Format.printf "assume: %a@." (fun fmt f -> pp_formula (fun a fmt -> A.pp fmt a) f fmt) f;
-        Format.printf "assume: %a@." (CCList.pp (CCList.pp  ~start:"[" ~stop:"]" Interface.Formula.pp)) f';
+        Logs.debug (fun m -> m "assume: %a@." (fun fmt f -> pp_formula (fun a fmt -> A.pp fmt a) f fmt) f);
+        Logs.debug (fun m -> m "assume: %a@." (CCList.pp (CCList.pp  ~start:"[" ~stop:"]" Interface.Formula.pp)) f');
         assume solver f' ()) formulas
 
   let next solver observe =
@@ -104,10 +104,10 @@ module Solver (A:Atom) (M:Map.S with type key = A.t)= struct
           |> OSeq.filter_map begin fun a ->
             try
               let v = sat.eval (true, a) in
-              let _ = Format.printf "observe: %a=%b@." A.pp a v in
+              let _ = Logs.debug (fun m -> m "observe: %a=%b@." A.pp a v) in
               Some (a, v)
             with UndecidedLit ->
-              let _ = Format.printf "observe: %a undecided@." A.pp a in
+              let _ = Logs.debug (fun m -> m "observe: %a undecided@." A.pp a) in
               None
           end
         end
