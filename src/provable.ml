@@ -43,6 +43,11 @@ type 'a timed =
   | At of 'a * int
   | Config of 'a
 
+let hash h = function
+  | Action (name,t) -> CCHash.(combine3 (int 0) (string name) (int t))
+  | At (a,t) -> CCHash.(combine3 (int 1) (h a) (int t))
+  | Config a -> CCHash.(combine2 (int 2) (h a))
+
 module StringSet = Set.Make(struct type t=string let compare=compare end)
 
 module Make (M : Map.S) = struct

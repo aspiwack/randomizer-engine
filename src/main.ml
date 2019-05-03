@@ -48,6 +48,13 @@ type program = {
   goal: atom
 }
 
+let hash_location = CCHash.string
+let hash_item = CCHash.string
+let hash_atom = function
+  | Reach l -> CCHash.(combine2 (int 0) (hash_location l))
+  | Have i -> CCHash.(combine2 (int 1) (hash_item i))
+  | Assign (l,i) -> CCHash.(combine3 (int 2) (hash_location l) (hash_item i))
+
 let print_atom = function
   | Reach l -> "reach: " ^ l
   | Have i -> "have: " ^ i
@@ -107,6 +114,8 @@ module AtomMap = Map.Make (struct type t = atom let compare = compare end)
 
 type formula = atom Provable.timed Formula.t
 
+module Solver = Sat.Solver(struct type t = atom Provable.timed let equal = (=) let hash = Provable.hash hash_atom let pp fmt a = Format.fprintf fmt "%s" (print_timed_atom a) end)(TimedAtomMap)
+
 (* XXX: This uses Bdd.set_max_var which is not at all a safe thing to
    do! If I use the function twice, it will destroy the previous
    bdd. *)
@@ -114,19 +123,9 @@ let compile_to_bdd (p : program) : (MLBDD.t * atom Provable.timed array) =
   let bdd_vars =
     collect_program_atoms p |> AtomSet.to_seq |> Array.of_seq
   in
-  (* let _ = Bdd.set_max_var (Array.length bdd_vars) in *)
-  (* let var (a : atom) : formula = Formula.var (AtomMap.find a var_index) in
-   * let reach (l : location) : Bdd.t = var (Reach l) in
-   * let have (i : item) : Bdd.t = var (Have i) in *)
   let assign (i : item) (l : location) : formula =
     Formula.var (Provable.Config (Assign(i,l)))
   in
-  (* XXX: clean *)
-  (* let map_reduce (type a) (op : Bdd.t -> Bdd.t -> Bdd.t) (e : Bdd.t) (f : a -> Bdd.t) (l : a list) : Bdd.t =
-   *   l |> List.map f |> List.fold_left op e
-   * in
-   * let conj f l = map_reduce (&&&) Bdd.one f l in
-   * let disj f l = map_reduce (|||) Bdd.zero f l in *)
   let clause (c : clause) : atom Provable.clause =
     let open Provable in {
       hyps=c.requires;
@@ -160,8 +159,7 @@ let compile_to_bdd (p : program) : (MLBDD.t * atom Provable.timed array) =
   let ranges_formula = Seq.map (range p) (List.to_seq p.range_constraints) in
   let logic_clauses = List.map clause p.logic in
   let assign_clauses =
-    let _ = Format.printf "Creating assign clauses@." in
-    let r = List.of_seq begin
+    List.of_seq begin
       List.to_seq p.pool |>
       Seq.flat_map begin fun i ->
         List.to_seq p.locations |>
@@ -174,9 +172,6 @@ let compile_to_bdd (p : program) : (MLBDD.t * atom Provable.timed array) =
         end
       end
     end
-    in
-    let _ = Format.printf "Done creating assign clauses@." in
-    r
   in
   let module Prove = Provable.Make(AtomMap) in
   let proof_system = Prove.convert {
@@ -184,7 +179,6 @@ let compile_to_bdd (p : program) : (MLBDD.t * atom Provable.timed array) =
       goal = p.goal
   }
   in
-  let _ = Format.printf "really done@." in
   let formulas = OSeq.append ranges_formula proof_system in
   let atoms =
     OSeq.(formulas >>= Formula.vars)
@@ -194,12 +188,12 @@ let compile_to_bdd (p : program) : (MLBDD.t * atom Provable.timed array) =
   in
   let var_index = invert_array atoms in
   let man = MLBDD.init () in
-  formulas
+  let solver = Solver.create () in
+  let _ = Solver.assume_formulas solver formulas in
+  Solver.successive_formulas solver (CCArray.filter (fun a -> match a with Provable.Config _ -> true | _ -> false) atoms)
     |> Seq.map (compile_formula man var_index)
-    |> OSeq.reduce (&&&)
+    |> OSeq.fold (|||) (MLBDD.dfalse man)
   , atoms
-    (* OSeq.reduce requires that there be at least one formula. There
-       is at least the goal formula, so we're good. *)
 
 let femto_example =
   (* A bit of early Alltp logic *)
@@ -322,7 +316,7 @@ let example =
   ] in
   { locations; pool; range_constraints; logic; goal }
 
-let print_to_dot b ~file =
+let print_to_dot legend b ~file =
   (* Adapted from Jean-Christophe Filliâtre's bdd library*)
   let open Format in
   let module H1 = Hashtbl.Make(struct type t = MLBDD.t let equal = MLBDD.equal let hash = MLBDD.hash end) in
@@ -345,7 +339,7 @@ let print_to_dot b ~file =
             fprintf fmt "%d [shape=box label=\"1\"];" (MLBDD.id b)
         | BIf (l, v, h) ->
             (* add_rank v b; *)
-            fprintf fmt "%d [label=\"x%d\"];" (MLBDD.id b) v;
+            fprintf fmt "%d [label=\"x%s\"];" (MLBDD.id b) (print_timed_atom (legend.(v-1)));
             fprintf fmt "%d -> %d;@\n" (MLBDD.id b) (MLBDD.id h);
             fprintf fmt "%d -> %d [style=\"dashed\"];@\n" (MLBDD.id b) (MLBDD.id l);
             visit h; visit l
@@ -363,11 +357,11 @@ let print_to_dot b ~file =
   close_out c
 
 let _ =
-  let (bdd, legend) = compile_to_bdd mini_example in
-  let _ =
-    Array.to_seqi legend |>
-    Seq.iter (fun (i,v) -> Format.printf "x%i: %s@." (i+1) (print_timed_atom v))
-  in
+  let (bdd, legend) = compile_to_bdd example in
+  (* let _ =
+   *   Array.to_seqi legend |>
+   *   Seq.iter (fun (i,v) -> Format.printf "x%i: %s@." (i+1) (print_timed_atom v))
+   * in *)
   Format.printf "%b@." (MLBDD.is_false bdd);
   (* print_string @@ MLBDD.to_stringb bdd *)
-  print_to_dot ~file:"example.dot" bdd
+  print_to_dot ~file:"example.dot" legend bdd

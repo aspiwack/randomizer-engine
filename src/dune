@@ -1,5 +1,5 @@
 (executable
  (name Main)
  (public_name randomizer-engine)
- (libraries mlbdd oseq)
+ (libraries mlbdd oseq containers msat)
  (flags :standard -warn-error -a))
