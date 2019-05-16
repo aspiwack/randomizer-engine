@@ -25,7 +25,19 @@
    progresses. This is very similar to the solution described in these
    slides:
    http://www.inf.ed.ac.uk/teaching/courses/plan/slides/SAT-Planning-Slides.pdf
-   *)
+
+   Idle thought: this really, really, makes me think of encoding the
+   Horn clauses a₁…an→b as a₁…an→▷b (next-g) and the goal g as ⋄g in
+   the logic of the topos of trees [ see
+   e.g. https://arxiv.org/abs/1208.3596 ]. Except that in the topos of
+   trees, you can satisfy this encoding by letting everything be true
+   at time 0. So we add these frame rules and initial state which
+   prevent this sort of workarounds. I don't know whether we can take
+   anything away from that. But I find this interesting. Maybe we can
+   see, here, some connection with the encoding of linear logic into a
+   (classical) modal logic, by way of a comonadic modality. We are in
+   a somewhat dual situation (as ▷ is related to the monadic modality
+   ⋄ (specifically, ⋄a = μx.a∨▷x)). *)
 
 type 'a clause = {
   concl: 'a;
