@@ -60,7 +60,7 @@ let print_atom = function
   | Have i -> "have: " ^ i
   | Assign(i,l) -> i ^ " ∈ " ^ l
 let print_timed_atom = let open Provable in function
-  | Config a -> print_atom a
+  | Selection a -> print_atom a
   | At(a,i) -> print_atom a ^ " @ " ^ string_of_int i
   | Action (n, i) -> n ^ " @ " ^ string_of_int i
 
@@ -124,7 +124,7 @@ let compile_to_bdd (p : program) : (MLBDD.t * atom Provable.timed array) =
     collect_program_atoms p |> AtomSet.to_seq |> Array.of_seq
   in
   let assign (i : item) (l : location) : formula =
-    Formula.var (Provable.Config (Assign(i,l)))
+    Formula.var (Provable.Selection (Assign(i,l)))
   in
   let clause (c : clause) : atom Provable.clause =
     let open Provable in {
@@ -190,7 +190,7 @@ let compile_to_bdd (p : program) : (MLBDD.t * atom Provable.timed array) =
   let man = MLBDD.init () in
   let solver = Solver.create () in
   let _ = Solver.assume_formulas solver formulas in
-  Solver.successive_formulas solver (CCArray.filter (fun a -> match a with Provable.Config _ -> true | _ -> false) atoms)
+  Solver.successive_formulas solver (CCArray.filter (fun a -> match a with Provable.Selection _ -> true | _ -> false) atoms)
     |> Seq.map (compile_formula man var_index)
     |> OSeq.fold (|||) (MLBDD.dfalse man)
   , atoms

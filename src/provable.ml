@@ -25,7 +25,19 @@
    progresses. This is very similar to the solution described in these
    slides:
    http://www.inf.ed.ac.uk/teaching/courses/plan/slides/SAT-Planning-Slides.pdf
-   *)
+
+   Idle thought: this really, really, makes me think of encoding the
+   Horn clauses a₁…an→b as a₁…an→▷b (next-g) and the goal g as ⋄g in
+   the logic of the topos of trees [ see
+   e.g. https://arxiv.org/abs/1208.3596 ]. Except that in the topos of
+   trees, you can satisfy this encoding by letting everything be true
+   at time 0. So we add these frame rules and initial state which
+   prevent this sort of workarounds. I don't know whether we can take
+   anything away from that. But I find this interesting. Maybe we can
+   see, here, some connection with the encoding of linear logic into a
+   (classical) modal logic, by way of a comonadic modality. We are in
+   a somewhat dual situation (as ▷ is related to the monadic modality
+   ⋄ (specifically, ⋄a = μx.a∨▷x)). *)
 
 type 'a clause = {
   concl: 'a;
@@ -41,12 +53,12 @@ type 'a program = {
 type 'a timed =
   | Action of string * int
   | At of 'a * int
-  | Config of 'a
+  | Selection of 'a
 
 let hash h = function
   | Action (name,t) -> CCHash.(combine3 (int 0) (string name) (int t))
   | At (a,t) -> CCHash.(combine3 (int 1) (h a) (int t))
-  | Config a -> CCHash.(combine2 (int 2) (h a))
+  | Selection a -> CCHash.(combine2 (int 2) (h a))
 
 module StringSet = Set.Make(struct type t=string let compare=compare end)
 
@@ -70,7 +82,7 @@ module Make (M : Map.S) = struct
 
     let at (i:int) (a : atom) : formula =
       if M.mem a P.timed then Formula.var @@ At(a,i)
-      else Formula.var @@ Config a
+      else Formula.var @@ Selection a
 
     let action_var (i:int) (name : string) : formula =
       Formula.var @@ Action (name,i)
