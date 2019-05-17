@@ -130,7 +130,7 @@ module Solver (L:Msat.FORMULA) (M:Map.S with type key = L.t)= struct
 
   let successive_formulas solver observe =
     OSeq.of_gen begin fun () ->
-      CCOpt.map (fun m -> assume solver [neg_clause_of_map m] (); map_to_formula m) (next solver observe)
+      CCOpt.map (fun m -> assume solver [neg_clause_of_map m] (); Logs.debug (fun m -> m "Found a shuffle@."); map_to_formula m) (next solver observe)
     end
 
 end

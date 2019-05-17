@@ -12,7 +12,7 @@ jobs:
             sudo apt-get update
             sudo apt-get install -y m4 autoconf
             opam switch create 4.07.1
-            opam install -y dune mlbdd oseq containers msat logs fmt hashcons
+            opam install -y dune mlbdd oseq containers msat logs fmt hashcons sedlex menhir
       - run:
           name: Build randomizer-engine
           command: |

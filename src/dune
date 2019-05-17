@@ -1,5 +1,10 @@
 (executable
  (name Main)
  (public_name randomizer-engine)
- (libraries mlbdd oseq containers msat msat.tseitin logs logs.fmt hashcons)
+ (libraries mlbdd oseq containers msat msat.tseitin logs logs.fmt hashcons sedlex menhirLib)
+ (preprocess (pps sedlex.ppx))
  (flags :standard -warn-error -a))
+
+(menhir
+  (flags "--table")
+  (modules parser))
