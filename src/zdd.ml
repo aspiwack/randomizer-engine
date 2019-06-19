@@ -167,9 +167,11 @@ module Make (P : Param) (V : Var) = struct
 
  include Core
 
- (* Of note: I'm trying to be careful that variables start at 1 in
-    MLBDD. I'm not sure they need to, it may be an artefact of mine
-    from a previous implementation. This could be simplified *)
+ (* Of note: here I assume that `the_vars` is actually indexed by the
+    number that the bdd uses. I'm creating a zdd with the same
+    variable names (integers) as the bdd, but since the zdd has its
+    variable names fixed, it must be a superset of those used by the
+    bdd. *)
  let of_bdd (b : MLBDD.t) : t =
    let module Input = struct
      type t = int*MLBDD.t
