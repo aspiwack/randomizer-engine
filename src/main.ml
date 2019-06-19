@@ -76,7 +76,7 @@ module TimedAtomMap = Map.Make (struct type t = atom Provable.timed let compare 
 
 let invert_array (arr : atom Provable.timed array) : int TimedAtomMap.t =
   Array.to_seqi arr |>
-  Seq.fold_left (fun acc (i,a) -> TimedAtomMap.add a (i+1) acc) TimedAtomMap.empty
+  Seq.fold_left (fun acc (i,a) -> TimedAtomMap.add a i acc) TimedAtomMap.empty
 
 let compile_formula man var_index (f : atom Provable.timed Formula.t) : MLBDD.t =
   let mk_var (a : atom Provable.timed) : MLBDD.t = MLBDD.ithvar man (TimedAtomMap.find a var_index) in
@@ -98,7 +98,7 @@ let collect_program_atoms (p : program) : AtomSet.t =
     List.to_seq p.pool |>
     Seq.flat_map (fun i ->
       List.to_seq p.locations |>
-      Seq.flat_map (fun l -> List.to_seq [Reach l; Have i; Assign(i,l)]))
+      Seq.flat_map (fun l -> List.to_seq [Assign(i,l)]))
   in
   AtomSet.of_seq atoms
 
@@ -186,14 +186,17 @@ let compile_to_bdd (p : program) : (MLBDD.t * atom Provable.timed array) =
     |> TimedAtomSet.to_seq
     |> Array.of_seq
   in
-  let var_index = invert_array atoms in
+  let observable =
+    CCArray.filter (fun a -> match a with Provable.Selection _ -> true | _ -> false) atoms
+  in
+  let var_index = invert_array observable in
   let man = MLBDD.init () in
   let solver = Solver.create () in
   let _ = Solver.assume_formulas solver formulas in
-  Solver.successive_formulas solver (CCArray.filter (fun a -> match a with Provable.Selection _ -> true | _ -> false) atoms)
+  Solver.successive_formulas solver observable
     |> Seq.map (compile_formula man var_index)
     |> OSeq.fold (|||) (MLBDD.dfalse man)
-  , atoms
+  , observable
 
 let femto_example =
   (* A bit of early Alltp logic *)
@@ -360,4 +363,27 @@ let _ =
   let _ = Logs.set_reporter (Logs_fmt.reporter ()) in
   let _ = Logs.set_level (Some Logs.Debug) in
   let (bdd, legend) = compile_to_bdd example in
-  print_to_dot ~file:"example.dot" legend bdd
+  let module Params = struct
+    type t = int (* XXX: ints might not be enough *)
+
+    let zero = 0
+    let (+) = (+)
+
+    let the_count_for_one = 1
+
+    let pp = CCInt.pp
+  end in
+  let module Vars = struct
+    type t = int
+
+    let the_vars = Array.mapi (fun i _ -> i+1) legend
+
+    let pp fmt i =
+      Format.fprintf fmt "%s" (print_timed_atom legend.(i))
+
+  end in
+  let module Z = Zdd.Make(Params)(Vars) in
+  let _ = Logs.debug (fun m -> m "Done producing the bdd. Converting to zdd") in
+  let zdd = Z.of_bdd bdd in
+  let _ = Logs.debug (fun m -> m "Done converting to zdd. Printing to dot") in
+  Z.print_to_dot ~file:"example.dot" zdd
