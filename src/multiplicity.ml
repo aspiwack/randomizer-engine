@@ -32,10 +32,20 @@
    "PoD small key"_5 + have: "PoD small key"_6 < 2*¬f + M*f (here M is
    7)
 
-  If I didn't say nonesense, the models (up to the value of `f`) are
+  If I didn't say nonsense, the models (up to the value of `f`) are
    the same. *)
 
-module PseudoBoolean (A:Msat__.Solver_intf.FORMULA) = struct
+module type Literal = sig
+
+  type t
+
+  include Msat__.Solver_intf.FORMULA with type t := t
+
+  val fresh : unit -> t
+
+end
+
+module PseudoBoolean (A:Literal) = struct
 
   (* Something like: 2*x + 7*y ⩾ 3 *)
   type clause = {
@@ -53,36 +63,36 @@ module PseudoBoolean (A:Msat__.Solver_intf.FORMULA) = struct
 
 
   (** [pop_0 c] is the clause obtained from [c] by setting the first
-     variable to 0, the variable is also returned
-     (normalised). Precondition: [c] is not empty. *)
+      variable to 0, the variable is also returned
+      (normalised). Precondition: [c] is not empty. *)
   let pop_0 (c : clause) : (A.t * clause) =
     match c.linear_combination with
     | (coeff,lit)::lc_rest ->
       let (var,sign) = A.norm lit in
       begin match sign with
-      | Msat__Solver_intf.Negated ->
-        (* coeff*¬var + lc_rest ⩾ c.constant *)
-        var, { linear_combination = lc_rest; constant = c.constant - coeff }
-      | Msat__Solver_intf.Same_sign ->
-        (* coeff*var + lc_rest ⩾ c.constant *)
-        var, { linear_combination = lc_rest; constant = c.constant }
+        | Msat__Solver_intf.Negated ->
+          (* coeff*¬var + lc_rest ⩾ c.constant *)
+          var, { linear_combination = lc_rest; constant = c.constant - coeff }
+        | Msat__Solver_intf.Same_sign ->
+          (* coeff*var + lc_rest ⩾ c.constant *)
+          var, { linear_combination = lc_rest; constant = c.constant }
       end
     | [] -> assert false
 
   (** [pop_1 c] is the clause obtained from [c] by setting the first
-     variable to 1, the variable is also returned
-     (normalised). Precondition: [c] is not empty. *)
+      variable to 1, the variable is also returned
+      (normalised). Precondition: [c] is not empty. *)
   let pop_1 (c : clause) : (A.t * clause) =
     match c.linear_combination with
     | (coeff,lit)::lc_rest ->
       let (var,sign) = A.norm lit in
       begin match sign with
-      | Msat__Solver_intf.Negated ->
-        (* coeff*¬var + lc_rest ⩾ c.constant *)
-        var, { linear_combination = lc_rest; constant = c.constant }
-      | Msat__Solver_intf.Same_sign ->
-        (* coeff*var + lc_rest ⩾ c.constant *)
-        var, { linear_combination = lc_rest; constant = c.constant - coeff }
+        | Msat__Solver_intf.Negated ->
+          (* coeff*¬var + lc_rest ⩾ c.constant *)
+          var, { linear_combination = lc_rest; constant = c.constant }
+        | Msat__Solver_intf.Same_sign ->
+          (* coeff*var + lc_rest ⩾ c.constant *)
+          var, { linear_combination = lc_rest; constant = c.constant - coeff }
       end
     | [] -> assert false
 
@@ -90,29 +100,54 @@ module PseudoBoolean (A:Msat__.Solver_intf.FORMULA) = struct
      paper. If performance becomes an issue, it should be considered
      to look at the other two translations from that same paper. *)
 
+  module IntMap = Map.Make(CCInt)
+
   (* XXX: return a dictionary to decode the integer variables in the
      bdd, into A.t-s. *)
-  let clause_to_bdd (c : clause) : MLBDD.t =
-    let rec clause_to_bdd (c : clause) (man : MLBDD.man) (count : int) : MLBDD.t =
-    (* Count is the number of variable which we have already inserted
-       in the bdd, it serves as the code of the next variable. *)
-       let sum = sum_of_coefficients c in
-       if c.constant <= 0 then MLBDD.dtrue man
-       else if sum < c.constant then MLBDD.dfalse man
-       else
-         (* /!\ IMPORTANT: if the length of the clause is 0, then
-            sum=0, so we know that c.constant <= 0 && 0 < c.constant
-            (by the previous to if-s). It's contradictory, so this
-            case never happens. Therefore, the clause has at least one
-            variable. *)
-         let (_var, fls) = pop_0 c in (* XXX: put var, in an array of sorts. *)
-         let (_, tru) = pop_1 c in
-         MLBDD.ite (clause_to_bdd fls man (count+1)) count (clause_to_bdd tru man (count+1))
+  (* XXX: The minisat+ gets some extra efficiency out of memoisation. *)
+  let clause_to_bdd (c : clause) : A.t array * MLBDD.t =
+    let legend =
+      c.linear_combination |> List.to_seq |> Seq.map snd |> Array.of_seq
     in
-    clause_to_bdd c (MLBDD.init ()) 0
+    let man = MLBDD.init () in
+    let rec clause_to_bdd (c : clause) (count : int) : MLBDD.t =
+      (* Count is the number of variable which we have already inserted
+         in the bdd, it serves as the code of the next variable. *)
+      let sum = sum_of_coefficients c in
+      if c.constant <= 0 then MLBDD.dtrue man
+      else if sum < c.constant then MLBDD.dfalse man
+      else
+        (* /!\ IMPORTANT: if the length of the clause is 0, then
+           sum=0, so we know that c.constant <= 0 && 0 < c.constant
+           (by the previous to if-s). It's contradictory, so this
+           case never happens. Therefore, the clause has at least one
+           variable. *)
+        let (_var, fls) = pop_0 c in (* XXX: put var, in an array of sorts. *)
+        let (_, tru) = pop_1 c in
+        MLBDD.ite (clause_to_bdd fls (count+1)) count (clause_to_bdd tru (count+1))
+    in
+    (* /!\ It's a bit delicate: we are reconstructing the mapping from
+       numbers to variable which was deduced during the loop. Maybe we
+       could more robustly pass a reversed index into this to the loop. *)
+    legend, clause_to_bdd c 0
 
-
-  (* let mk_sat (c : clause) : A.t list list = () *)
+  let mk_sat (c : clause) : A.t list list =
+    let module Tseitin = Msat_tseitin.Make(A) in
+    let mk_ite b t f =
+      let open Tseitin in
+      let b' = make_atom b in
+      make_and [
+        make_imply b' t;
+        make_imply (make_not b') f
+      ]
+    in
+    let (legend, bdd) = clause_to_bdd c in
+    let mk_node = function
+      | MLBDD.BFalse -> Tseitin.f_false
+      | MLBDD.BTrue -> Tseitin.f_true
+      | MLBDD.BIf(f,v,t) -> mk_ite (legend.(v)) f t
+    in
+    Tseitin.make_cnf @@ MLBDD.foldb mk_node bdd
 end
 
 
@@ -136,8 +171,20 @@ end
 
 module Make (A : AtomsWithMults) = struct
 
-  type atoms =
+
+  type 'a atoms =
     | Individual of A.u * int
-    | Fresh of string
+    | Fresh of string * int
+    (* The string is some human-entered name, for provenance, and the
+       int, is the warranty of freshness. *)
+
+  let fresh =
+    (* XXX: it would be better, to have a gen_sym which starts at 0 for
+       each different strings. *)
+    let gen_sym = ref 0 in
+    fun s ->
+      let next = !gen_sym in
+      let () = incr gen_sym in
+      Fresh (s, next)
 
 end
