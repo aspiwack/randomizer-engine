@@ -43,22 +43,84 @@ module type Literal = sig
 
   val fresh : unit -> t
 
+  (* XXX: Maybe what I really want is finitely supported functions of
+     sorts. But I'll deal with maps explicitly for the time being. *)
+  module Map : Map.S with type key = t
+
 end
 
 module PseudoBoolean (A:Literal) = struct
 
+  type scaled = S of int * A.t
+    (* Internal. Invariant: the coefficient is always strictly positive. *)
+
+  let coefficient = fun (S(coeff, _)) -> coeff
+  let variable = fun (S(_, var)) -> var
+
+  let mk_scaled i l =
+    if i > 0 then Some(0, S(i,l))
+    else if i < 0 then Some(i, S(-i, A.neg l)) (* we replace `x` by `1 - ¬x` *)
+    else (* if i=0 *) None
+
   (* Something like: 2*x + 7*y ⩾ 3 *)
   type clause = {
-    linear_combination: (int*A.t) list;
+    linear_combination: scaled list;
     constant : int
   }
 
-  (* XXX: we need to make sure that all coefficients are positive for
-     this to makes in clause_to_bdd. *)
+  module Expr = struct
+
+    type t = int A.Map.t * int
+    (* Invariant: all the keys are “normalised” (that is there is a
+       single key for x and ¬x) *)
+
+    let var l = match A.norm l with
+    | (v, Msat__Solver_intf.Same_sign) ->
+      ((A.Map.singleton v 1), 0)
+    | (v, Msat__Solver_intf.Negated) ->
+      ((A.Map.singleton v (-1)), 1) (* ¬x is encoded as (1-x) *)
+    let const n = (A.Map.empty, n)
+    let m2c = function
+      | Some i -> i
+      | None -> 0
+
+    let greater_than_or_equal_to_zero (e, n) =
+      let (leftover, linear_combination) =
+        let module Sum = struct
+          type 'a t = int * 'a
+          let return x = (0, x)
+          let map f (i, x) = (i, f x)
+          let (>>=) (i, x) f =
+            let (j, y) = f x in
+            (i+j, y)
+        end in
+        let module Summing = OSeq.Traverse(Sum) in
+        e |> A.Map.to_seq |> Seq.filter_map (fun (l,i) -> mk_scaled i l) |> Summing.sequence_m |> Sum.map List.of_seq
+      in
+      let constant = (-n)-leftover in
+      { linear_combination; constant }
+
+    let merge_expr ( * ) (e1,n1) (e2,n2) =
+      (A.Map.merge (fun _ l r -> Some ((m2c l) * (m2c r))) e1 e2, n1*n2)
+    (* Note: I'm not caring too much about 0s here. It should be ok,
+       because I never care about equality of exprs. So I let the 0s
+       linger around, but I'll remove them when I create a clause. *)
+
+    let (+) e1 e2 = merge_expr (+) e1 e2
+    let (-) e1 e2 = merge_expr (-) e1 e2
+    let ( * ) k (e,n) = (A.Map.map (fun x -> k*x) e, k*n)
+
+    let (>=) e1 e2 = greater_than_or_equal_to_zero (e1 - e2)
+    let (<=) e1 e2 = e2 >= e1
+    let (>) e1 e2 = e1 >= (e2 + const 1)
+    let (<) e1 e2 = e2 > e1
+  end
+
+
   let sum_of_coefficients (c : clause) : int =
     c.linear_combination
     |> List.to_seq
-    |> Seq.map fst
+    |> Seq.map coefficient
     |> Seq.fold_left (+) 0
 
 
@@ -67,7 +129,7 @@ module PseudoBoolean (A:Literal) = struct
       (normalised). Precondition: [c] is not empty. *)
   let pop_0 (c : clause) : (A.t * clause) =
     match c.linear_combination with
-    | (coeff,lit)::lc_rest ->
+    | S(coeff,lit)::lc_rest ->
       let (var,sign) = A.norm lit in
       begin match sign with
         | Msat__Solver_intf.Negated ->
@@ -84,7 +146,7 @@ module PseudoBoolean (A:Literal) = struct
       (normalised). Precondition: [c] is not empty. *)
   let pop_1 (c : clause) : (A.t * clause) =
     match c.linear_combination with
-    | (coeff,lit)::lc_rest ->
+    | S(coeff,lit)::lc_rest ->
       let (var,sign) = A.norm lit in
       begin match sign with
         | Msat__Solver_intf.Negated ->
@@ -105,9 +167,12 @@ module PseudoBoolean (A:Literal) = struct
   (* XXX: return a dictionary to decode the integer variables in the
      bdd, into A.t-s. *)
   (* XXX: The minisat+ gets some extra efficiency out of memoisation. *)
+  (* XXX: The minisat+ paper, recommends to pop the variable from the
+     one with the bigger coefficient, to the one with the smaller
+     coefficient, as it tends to yield smaller BDDs. *)
   let clause_to_bdd (c : clause) : A.t array * MLBDD.t =
     let legend =
-      c.linear_combination |> List.to_seq |> Seq.map snd |> Array.of_seq
+      c.linear_combination |> List.to_seq |> Seq.map variable |> Array.of_seq
     in
     let man = MLBDD.init () in
     let rec clause_to_bdd (c : clause) (count : int) : MLBDD.t =
