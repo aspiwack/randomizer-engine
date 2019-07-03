@@ -157,6 +157,17 @@ let compile_to_bdd (p : program) : (MLBDD.t * atom Provable.timed array) =
     Formula.(at_least && at_most && only)
   in
   let ranges_formula = Seq.map (range p) (List.to_seq p.range_constraints) in
+  let capacity (p : program) (l : location) : formula =
+    let distinct_pairs =
+      List.to_seq p.pool |>
+      Seq.flat_map (fun i -> Seq.map (fun i' -> (i, i')) (List.to_seq p.pool)) |>
+      Seq.filter (fun (i,i') -> i <> i')
+    in
+    let open Formula in
+    conj_map (fun (i,i') -> not (assign i l && assign i' l)) (List.of_seq distinct_pairs)
+  in
+  let capacities_formula = Seq.map (capacity p) (List.to_seq p.locations)
+  in
   let logic_clauses = List.map clause p.logic in
   let assign_clauses =
     List.of_seq begin
@@ -179,7 +190,12 @@ let compile_to_bdd (p : program) : (MLBDD.t * atom Provable.timed array) =
       goal = p.goal
   }
   in
-  let formulas = OSeq.append ranges_formula proof_system in
+  let formulas = OSeq.flatten @@ OSeq.of_list
+      [ ranges_formula;
+        capacities_formula;
+        proof_system
+      ]
+  in
   let atoms =
     OSeq.(formulas >>= Formula.vars)
     |> TimedAtomSet.of_seq
