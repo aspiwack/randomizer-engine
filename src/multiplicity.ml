@@ -196,8 +196,9 @@ module PseudoBoolean (A:Literal) = struct
        could more robustly pass a reversed index into this to the loop. *)
     legend, clause_to_bdd c 0
 
-  let mk_sat (c : clause) : A.t list list =
-    let module Tseitin = Msat_tseitin.Make(A) in
+  module Tseitin = Msat_tseitin.Make(A)
+
+  let mk_sat (c : clause) : Tseitin.t =
     let mk_ite b t f =
       let open Tseitin in
       let b' = make_atom b in
@@ -212,7 +213,7 @@ module PseudoBoolean (A:Literal) = struct
       | MLBDD.BTrue -> Tseitin.f_true
       | MLBDD.BIf(f,v,t) -> mk_ite (legend.(v)) f t
     in
-    Tseitin.make_cnf @@ MLBDD.foldb mk_node bdd
+    MLBDD.foldb mk_node bdd
 end
 
 
@@ -221,27 +222,36 @@ module type AtomsWithMults = sig
   type t
   type u
 
-  (* What is this saying: we want to decompose an multiplied atom into
-     its name and its multiplicity. If it's not multiplied (for
+  val compare : t -> t -> int
+
+  include Msat.FORMULA with type t := t
+
+  (** What this is saying: we want to decompose an multiplied atom
+     into its name and its multiplicity. If it's not multiplied (for
      instance because it doesn't make sense to multiply it) then we
      can return 1. Our transformation will make sure, that when
-     multiplicity is 1, we don't do arithmetic. *)
-  val decomp : t -> (u * int)
+     multiplicity is 1, we don't do arithmetic.
 
-  module AtomMap : Map.S with type key = u
+     The list is all the instances available of the item represented
+     by [u].*)
+  val decomp : u -> (t list * int)
 
-  val quantities : int AtomMap.t
+  val norm_u : u -> u * Msat.Solver_intf.negated
+
+  (* module AtomMap : Map.S with type key = t
+   *
+   * val quantities : int AtomMap.t *)
 
 end
 
 module Make (A : AtomsWithMults) = struct
 
-
-  type 'a atoms =
-    | Individual of A.u * int
-    | Fresh of string * int
+  type atom =
+    | Individual of A.t
+    | Fresh of bool * string * int
     (* The string is some human-entered name, for provenance, and the
-       int, is the warranty of freshness. *)
+       int, is the warranty of freshness.
+       Boolean: [false] if negated *)
 
   let fresh =
     (* XXX: it would be better, to have a gen_sym which starts at 0 for
@@ -250,6 +260,78 @@ module Make (A : AtomsWithMults) = struct
     fun s ->
       let next = !gen_sym in
       let () = incr gen_sym in
-      Fresh (s, next)
+      Fresh (false, s, next)
+
+  module L : Literal with type t = atom = struct
+
+    type t = atom
+
+    let equal a b = match a, b with
+      | Individual a, Individual b -> A.equal a b
+      | Fresh (na, sa, ia), Fresh (nb, sb, ib) -> na = nb && sa = sb && ia == ib
+      | _ -> false
+
+    let hash = function
+      | Individual a -> CCHash.(combine2 (int 0) (A.hash a))
+      | Fresh (na, sa, ia) -> CCHash.(combine4 (int 1) (bool na) (string sa) (int ia))
+
+    let pp fmt = function
+      | Individual a -> A.pp fmt a
+      | Fresh (na, sa, ia) ->
+        if na then Format.fprintf fmt "f:%s%d" sa ia
+        else Format.fprintf fmt "~f:%s%d" sa ia
+
+    let neg = function
+      | Individual a -> Individual (A.neg a)
+      | Fresh (na, sa, ia) -> Fresh (not na, sa, ia)
+
+    let norm = function
+      | Individual a ->
+        let (a',n) = A.norm a in
+        (Individual a', n)
+      | Fresh (na, _, _) as a ->
+        if na then (a, Same_sign)
+        else (neg a, Negated)
+
+    let fresh () = fresh "m"
+
+    module Map = Map.Make(struct
+        type nonrec t = t
+        let compare a b = match a, b with
+          | Individual a, Individual b -> A.compare a b
+          | Individual _, _ -> 1
+          | _, Individual _ -> -1
+          | Fresh(na, sa, ia), Fresh(nb, sb, ib) ->
+            CCOrd.(triple bool string int) (na, sa, ia) (nb, sb, ib)
+    end)
+  end
+
+  module I = PseudoBoolean(L)
+
+  let compile (p : A.u list list) : atom list list =
+    let compile_literal (l : A.u) : I.Tseitin.t =
+      let (l, n) = A.norm_u l in
+      let restore_negation f = match n with
+        | Msat.Negated -> I.Tseitin.make_not f
+        | Msat.Same_sign -> f
+      in
+      let positive =
+        match A.decomp l with
+        | [single], 1 ->
+          I.Tseitin.make_atom (Individual single)
+        | individuals, num ->
+          let sum = List.fold_left I.Expr.(+) (I.Expr.const 0) in
+          I.mk_sat @@
+          I.Expr.(sum (List.map (fun i -> var (Individual i)) individuals) >= const num)
+      in
+      restore_negation positive
+    in
+    let compile_clause (c : A.u list) : atom list list =
+      c
+      |> List.map compile_literal
+      |> I.Tseitin.make_or
+      |> I.Tseitin.make_cnf
+    in
+    CCList.flat_map compile_clause p
 
 end
