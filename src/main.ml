@@ -20,6 +20,7 @@ type variable = string
 
 type location = variable
 type item = variable
+type indexed_item = item * int
 (* Future plan for item: there can be more than one of an item in the
    pool. In which case it will be translated to n variables (where n
    is the number of occurrences of that item in the pool), the
@@ -29,15 +30,20 @@ type item = variable
 type range_constraint = {
   scrutinee: item;
   range: location list }
-type atom =
+
+type 'i atom =
   | Reach of location
-  | Have of item * int
-  | Assign of location * item
+  | Have of 'i * int
+  | Assign of location * 'i
   (* Assign doesn't come from parsing as it is equivalent to a
      singleton range_constraint. It appears in translations.*)
+let map_atom f = function
+  | Reach l -> Reach l
+  | Have (i, n) -> Have (f i, n)
+  | Assign (l, i) -> Assign (l, f i)
 type clause = {
-  goal: atom;
-  requires: atom list
+  goal: item atom;
+  requires: item atom list
 }
 
 type program = {
@@ -45,24 +51,27 @@ type program = {
   pool: item list;
   range_constraints: range_constraint list;
   logic: clause list;
-  goal: atom
+  goal: item atom
 }
 
 let hash_location = CCHash.string
 let hash_item = CCHash.string
-let hash_atom = function
+let hash_indexed_item (i,n) = CCHash.(combine2 (string i) (int n))
+let hash_atom hash_item = function
   | Reach l -> CCHash.(combine2 (int 0) (hash_location l))
   | Have (i, n) -> CCHash.(combine3 (int 1) (hash_item i) (int n))
   | Assign (l,i) -> CCHash.(combine3 (int 2) (hash_location l) (hash_item i))
 
-let print_atom = function
+let print_item i = i
+let print_indexed_item (i, n) = i ^ "_" ^ (string_of_int n)
+let print_atom print_item = function
   | Reach l -> "reach: " ^ l
-  | Have (i,1) -> "have: " ^ i
-  | Have (i,n) -> "have: " ^ i ^ " *" ^ (string_of_int n)
-  | Assign(i,l) -> i ^ " ∈ " ^ l
-let print_timed_atom = let open Provable in function
-  | Selection a -> print_atom a
-  | At(a,i) -> print_atom a ^ " @ " ^ string_of_int i
+  | Have (i,1) -> "have: " ^ print_item i
+  | Have (i,n) -> "have: " ^ print_item i ^ " *" ^ (string_of_int n)
+  | Assign(l,i) -> print_item i ^ " ∈ " ^ l
+let print_timed_atom print_item = let open Provable in function
+  | Selection a -> print_atom print_item a
+  | At(a,i) -> print_atom print_item a ^ " @ " ^ string_of_int i
   | Action (n, i) -> n ^ " @ " ^ string_of_int i
 
 let (&&&) = MLBDD.dand
@@ -71,21 +80,44 @@ let anot = MLBDD.dnot
 let (-->) = MLBDD.imply
 
 (* XXX: do I still need the AtomSet? *)
-module AtomSet = Set.Make (struct type t = atom let compare = compare end)
-module TimedAtomSet = Set.Make (struct type t = atom Provable.timed let compare = compare end)
-module TimedAtomMap = Map.Make (struct type t = atom Provable.timed let compare = compare end)
+module AtomSet = Set.Make (struct type t = item atom let compare = compare end)
+module TimedAtomSet = Set.Make (struct type t = item atom Provable.timed let compare = compare end)
+module TimedAtomMap = Map.Make (struct type t = item atom Provable.timed let compare = compare end)
+(* XXX: remove?*)
+module AtomMap = Map.Make (struct type t = item atom let compare = compare end)
 
-let invert_array (arr : atom Provable.timed array) : int TimedAtomMap.t =
+type formula = item atom Provable.timed Formula.t
+
+module TimedLiteral = Sat.Literal(struct type t = item atom Provable.timed let equal = (=) let hash = Provable.hash (hash_atom hash_item) let pp fmt a = Format.fprintf fmt "%s" (print_timed_atom print_item a) end)
+module TimedIndexedLiteral = Sat.Literal(struct type t = indexed_item atom Provable.timed let equal = (=) let hash = Provable.hash (hash_atom hash_indexed_item) let pp fmt a = Format.fprintf fmt "%s" (print_timed_atom print_indexed_item a) end)
+(* XXX: Literal, should provide its comparison function *)
+module TimedLiteralMap = Map.Make(struct type t = TimedLiteral.t let compare = compare end)
+module LiteralsWithMults = struct
+  include TimedIndexedLiteral
+  type u = TimedLiteral.t
+
+  let compare = compare
+  let norm_u = TimedLiteral.norm
+
+  let decomp (n,l) =
+    ([n,Provable.map_timed (map_atom (fun i -> (i,0))) l], 1)
+end
+module Mult = Multiplicity.Make(LiteralsWithMults)
+
+let invert_array (arr : Mult.L.t array) : int Mult.L.Map.t =
   Array.to_seqi arr |>
-  Seq.fold_left (fun acc (i,a) -> TimedAtomMap.add a i acc) TimedAtomMap.empty
+  Seq.fold_left (fun acc (i,a) -> Mult.L.Map.add a i acc) Mult.L.Map.empty
 
-let compile_formula man var_index (f : (bool * atom Provable.timed) Formula.t) : MLBDD.t =
-  let mk_var (a : atom Provable.timed) : MLBDD.t = MLBDD.ithvar man (TimedAtomMap.find a var_index) in
+let compile_formula man var_index (f : Mult.L.t Formula.t) : MLBDD.t =
+  let mk_var (l : Mult.L.t) : MLBDD.t =
+    match Mult.L.norm l with
+    | (a, Msat.Negated) -> MLBDD.dnot @@ MLBDD.ithvar man (Mult.L.Map.find a var_index)
+    | (a, Msat.Same_sign) -> MLBDD.ithvar man (Mult.L.Map.find a var_index)
+  in
   let rec compile = let open Formula in function
     | Zero -> MLBDD.dfalse man
     | One -> MLBDD.dtrue man
-    | Var (true, a) -> mk_var a
-    | Var (false, a) -> MLBDD.dnot (mk_var a)
+    | Var l -> mk_var l
     | And (x,y) -> compile x &&& compile y
     | Or (x,y) -> compile x ||| compile y
     | Impl (x,y) -> MLBDD.imply (compile x) (compile y)
@@ -96,11 +128,11 @@ let compile_formula man var_index (f : (bool * atom Provable.timed) Formula.t) :
   compile f
 
 let collect_program_atoms (p : program) : AtomSet.t =
-  let atoms : atom Seq.t =
+  let atoms : item atom Seq.t =
     List.to_seq p.pool |>
     Seq.flat_map (fun i ->
       List.to_seq p.locations |>
-      Seq.flat_map (fun l -> List.to_seq [Assign(i,l)]))
+      Seq.flat_map (fun l -> List.to_seq [Assign(l,i)]))
   in
   AtomSet.of_seq atoms
 
@@ -111,27 +143,20 @@ let gen_rule_name : unit -> string =
     incr count;
     r
 
-(* XXX: remove?*)
-module AtomMap = Map.Make (struct type t = atom let compare = compare end)
 
-type formula = atom Provable.timed Formula.t
-
-module TimedLiteral = Sat.Literal(struct type t = atom Provable.timed let equal = (=) let hash = Provable.hash hash_atom let pp fmt a = Format.fprintf fmt "%s" (print_timed_atom a) end)
-(* XXX: Literal, should provide its comparison function *)
-module TimedLiteralMap = Map.Make(struct type t = TimedLiteral.t let compare = compare end)
-module Solver = Sat.Solver(TimedLiteral)(TimedLiteralMap)
+module Solver = Sat.Solver(Mult.L)(Mult.L.Map)
 
 (* XXX: This uses Bdd.set_max_var which is not at all a safe thing to
    do! If I use the function twice, it will destroy the previous
    bdd. *)
-let compile_to_bdd (p : program) : (MLBDD.t * atom Provable.timed array) =
+let compile_to_bdd (p : program) : (MLBDD.t * Mult.L.t array) =
   let bdd_vars =
     collect_program_atoms p |> AtomSet.to_seq |> Array.of_seq
   in
   let assign (i : item) (l : location) : formula =
-    Formula.var (Provable.Selection (Assign(i,l)))
+    Formula.var (Provable.Selection (Assign(l,i)))
   in
-  let clause (c : clause) : atom Provable.clause =
+  let clause (c : clause) : item atom Provable.clause =
     let open Provable in {
       hyps=c.requires;
       concl=c.goal;
@@ -181,7 +206,7 @@ let compile_to_bdd (p : program) : (MLBDD.t * atom Provable.timed array) =
         List.to_seq p.locations |>
         Seq.map begin fun l ->
           let open Provable in {
-            hyps = [ Reach l; Assign(i,l) ];
+            hyps = [ Reach l; Assign(l,i) ];
             concl = Have (i, 1);
             name = gen_rule_name ()
           }
@@ -202,6 +227,7 @@ let compile_to_bdd (p : program) : (MLBDD.t * atom Provable.timed array) =
       ]
   in
   let clauses = formulas  |> OSeq.flat_map TimedLiteral.cnf_seq in
+  let clauses = Mult.compile (List.of_seq clauses) in
   let atoms =
     OSeq.(formulas >>= Formula.vars)
     |> TimedAtomSet.of_seq
@@ -210,12 +236,16 @@ let compile_to_bdd (p : program) : (MLBDD.t * atom Provable.timed array) =
   in
   let observable =
     CCArray.filter (fun a -> match a with Provable.Selection _ -> true | _ -> false) atoms
+    |> Array.map (Provable.map_timed (map_atom (fun i -> (i, 0))))
+    |> Array.map TimedLiteral.of_atom
+    |> Array.map (fun a -> Mult.Individual a)
   in
   let var_index = invert_array observable in
   let man = MLBDD.init () in
   let solver = Solver.create () in
-  let _ = Solver.assume_clauses solver clauses in
-  Solver.successive_formulas solver (Array.map TimedLiteral.of_atom observable)
+  let _ = Solver.assume_clauses solver (List.to_seq clauses) in
+  (* NEXT: change observable to have elements of type Mult.atom. It's really the only way *)
+  Solver.successive_formulas solver observable
     |> Seq.map (compile_formula man var_index)
     |> OSeq.fold (|||) (MLBDD.dfalse man)
   , observable
@@ -364,7 +394,7 @@ let print_to_dot legend b ~file =
             fprintf fmt "%d [shape=box label=\"1\"];" (MLBDD.id b)
         | BIf (l, v, h) ->
             (* add_rank v b; *)
-            fprintf fmt "%d [label=\"x%s\"];" (MLBDD.id b) (print_timed_atom (legend.(v-1)));
+            fprintf fmt "%d [label=\"x%s\"];" (MLBDD.id b) (print_timed_atom print_item (legend.(v-1)));
             fprintf fmt "%d -> %d;@\n" (MLBDD.id b) (MLBDD.id h);
             fprintf fmt "%d -> %d [style=\"dashed\"];@\n" (MLBDD.id b) (MLBDD.id l);
             visit h; visit l
@@ -401,7 +431,7 @@ let _ =
     let the_vars = Array.mapi (fun i _ -> i+1) legend
 
     let pp fmt i =
-      Format.fprintf fmt "%s" (print_timed_atom legend.(i))
+      Format.fprintf fmt "%a" Mult.L.pp legend.(i)
 
   end in
   let module Z = Zdd.Make(Params)(Vars) in
