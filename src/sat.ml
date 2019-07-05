@@ -1,5 +1,6 @@
 open Msat.Solver_intf
 
+(* XXX: Replace this by the module type from Msat. *)
 module type Atom = sig
   type t
   val equal : t -> t -> bool
