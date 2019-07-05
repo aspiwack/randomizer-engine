@@ -31,7 +31,7 @@ type range_constraint = {
   range: location list }
 type atom =
   | Reach of location
-  | Have of item
+  | Have of item * int
   | Assign of location * item
   (* Assign doesn't come from parsing as it is equivalent to a
      singleton range_constraint. It appears in translations.*)
@@ -52,12 +52,13 @@ let hash_location = CCHash.string
 let hash_item = CCHash.string
 let hash_atom = function
   | Reach l -> CCHash.(combine2 (int 0) (hash_location l))
-  | Have i -> CCHash.(combine2 (int 1) (hash_item i))
+  | Have (i, n) -> CCHash.(combine3 (int 1) (hash_item i) (int n))
   | Assign (l,i) -> CCHash.(combine3 (int 2) (hash_location l) (hash_item i))
 
 let print_atom = function
   | Reach l -> "reach: " ^ l
-  | Have i -> "have: " ^ i
+  | Have (i,1) -> "have: " ^ i
+  | Have (i,n) -> "have: " ^ i ^ " *" ^ (string_of_int n)
   | Assign(i,l) -> i ^ " ∈ " ^ l
 let print_timed_atom = let open Provable in function
   | Selection a -> print_atom a
@@ -181,7 +182,7 @@ let compile_to_bdd (p : program) : (MLBDD.t * atom Provable.timed array) =
         Seq.map begin fun l ->
           let open Provable in {
             hyps = [ Reach l; Assign(i,l) ];
-            concl = Have i;
+            concl = Have (i, 1);
             name = gen_rule_name ()
           }
         end
@@ -234,7 +235,7 @@ let femto_example =
     {scrutinee=sword; range=locations};
   ] in
   let logic = [
-    {goal=Reach eastern_boss; requires=[Have sword]};
+    {goal=Reach eastern_boss; requires=[Have (sword, 1)]};
     {goal=Reach well; requires=[]};
   ] in
   { locations; pool; range_constraints; logic; goal }
@@ -258,7 +259,7 @@ let micro_example =
     {scrutinee=bow; range=locations};
   ] in
   let logic = [
-    {goal=Reach eastern_boss; requires=[Have bow; Have sword]};
+    {goal=Reach eastern_boss; requires=[Have (bow, 1); Have (sword, 1)]};
     {goal=Reach well; requires=[]};
     {goal=Reach hideout; requires=[]};
     {goal=Reach eastern_chest; requires=[]};
@@ -288,10 +289,10 @@ let mini_example =
     {scrutinee=eastern_big; range=eastern_palace};
   ] in
   let logic = [
-    {goal=Reach eastern_boss; requires=[Have bow; Have sword; Have eastern_big]};
+    {goal=Reach eastern_boss; requires=[Have (bow, 1); Have (sword, 1); Have (eastern_big, 1)]};
     {goal=Reach well; requires=[]};
     {goal=Reach hideout; requires=[]};
-    {goal=Reach eastern_chest; requires=[Have eastern_big]};
+    {goal=Reach eastern_chest; requires=[Have (eastern_big, 1)]};
     {goal=Reach eastern_big_chest; requires=[]};
   ] in
   { locations; pool; range_constraints; logic; goal }
@@ -329,14 +330,14 @@ let example =
     {scrutinee=desert_big; range=desert_palace};
   ] in
   let logic = [
-    {goal=Reach eastern_boss; requires=[Have bow; Have sword; Have eastern_big]};
-    {goal=Reach desert_boss; requires=[Have glove; Have sword; Have eastern_big]};
-    {goal=Reach desert_torch; requires=[Have boots]};
+    {goal=Reach eastern_boss; requires=[Have (bow, 1); Have (sword, 1); Have (eastern_big, 1)]};
+    {goal=Reach desert_boss; requires=[Have (glove, 1); Have (sword, 1); Have (eastern_big, 1)]};
+    {goal=Reach desert_torch; requires=[Have (boots, 1)]};
     {goal=Reach well; requires=[]};
     {goal=Reach hideout; requires=[]};
     {goal=Reach eastern_chest; requires=[]};
-    {goal=Reach eastern_big_chest; requires=[Have eastern_big]};
-    {goal=Reach desert_big_chest; requires=[Have desert_big]};
+    {goal=Reach eastern_big_chest; requires=[Have (eastern_big, 1)]};
+    {goal=Reach desert_big_chest; requires=[Have (desert_big, 1)]};
   ] in
   { locations; pool; range_constraints; logic; goal }
 
