@@ -78,18 +78,19 @@ let invert_array (arr : atom Provable.timed array) : int TimedAtomMap.t =
   Array.to_seqi arr |>
   Seq.fold_left (fun acc (i,a) -> TimedAtomMap.add a i acc) TimedAtomMap.empty
 
-let compile_formula man var_index (f : atom Provable.timed Formula.t) : MLBDD.t =
+let compile_formula man var_index (f : (bool * atom Provable.timed) Formula.t) : MLBDD.t =
   let mk_var (a : atom Provable.timed) : MLBDD.t = MLBDD.ithvar man (TimedAtomMap.find a var_index) in
   let rec compile = let open Formula in function
     | Zero -> MLBDD.dfalse man
     | One -> MLBDD.dtrue man
-    | Var a -> mk_var a
+    | Var (true, a) -> mk_var a
+    | Var (false, a) -> MLBDD.dnot (mk_var a)
     | And (x,y) -> compile x &&& compile y
     | Or (x,y) -> compile x ||| compile y
     | Impl (x,y) -> MLBDD.imply (compile x) (compile y)
     | Not x -> anot (compile x)
   in
-  let _ = Logs.debug (fun m -> m "%t@." (Formula.pp (fun a fmt -> Format.fprintf fmt "%s" (print_timed_atom a)) f)) in
+  (* let _ = Logs.debug (fun m -> m "%t@." (Formula.pp (fun a fmt -> Format.fprintf fmt "%s" (print_timed_atom a)) f)) in *)
   (* assert false *)
   compile f
 
@@ -114,7 +115,10 @@ module AtomMap = Map.Make (struct type t = atom let compare = compare end)
 
 type formula = atom Provable.timed Formula.t
 
-module Solver = Sat.Solver(struct type t = atom Provable.timed let equal = (=) let hash = Provable.hash hash_atom let pp fmt a = Format.fprintf fmt "%s" (print_timed_atom a) end)(TimedAtomMap)
+module TimedLiteral = Sat.Literal(struct type t = atom Provable.timed let equal = (=) let hash = Provable.hash hash_atom let pp fmt a = Format.fprintf fmt "%s" (print_timed_atom a) end)
+(* XXX: Literal, should provide its comparison function *)
+module TimedLiteralMap = Map.Make(struct type t = TimedLiteral.t let compare = compare end)
+module Solver = Sat.Solver(TimedLiteral)(TimedLiteralMap)
 
 (* XXX: This uses Bdd.set_max_var which is not at all a safe thing to
    do! If I use the function twice, it will destroy the previous
@@ -196,6 +200,7 @@ let compile_to_bdd (p : program) : (MLBDD.t * atom Provable.timed array) =
         proof_system
       ]
   in
+  let clauses = formulas  |> OSeq.flat_map TimedLiteral.cnf_seq in
   let atoms =
     OSeq.(formulas >>= Formula.vars)
     |> TimedAtomSet.of_seq
@@ -208,8 +213,8 @@ let compile_to_bdd (p : program) : (MLBDD.t * atom Provable.timed array) =
   let var_index = invert_array observable in
   let man = MLBDD.init () in
   let solver = Solver.create () in
-  let _ = Solver.assume_formulas solver formulas in
-  Solver.successive_formulas solver observable
+  let _ = Solver.assume_clauses solver clauses in
+  Solver.successive_formulas solver (Array.map TimedLiteral.of_atom observable)
     |> Seq.map (compile_formula man var_index)
     |> OSeq.fold (|||) (MLBDD.dfalse man)
   , observable
