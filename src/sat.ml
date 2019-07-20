@@ -1,5 +1,6 @@
 open Msat.Solver_intf
 
+(* XXX: Replace this by the module type from Msat. *)
 module type Atom = sig
   type t
   val equal : t -> t -> bool
@@ -40,6 +41,8 @@ module Literal (A:Atom) = struct
       return @@ cl@cr
     end
 
+  let of_atom a = (true, a)
+
   (** [cnf] is not, in general, efficient. But it will be given only
      easy cases in practice. In the future, I may avoid cnf altogether
      and produce clauses directly. But since I already have the
@@ -60,12 +63,14 @@ module Literal (A:Atom) = struct
     in
     cnf true
 
+  let cnf_seq f = cnf f |> List.to_seq
+
 end
 
-module Solver (A:Atom) (M:Map.S with type key = A.t)= struct
+module Solver (L:Msat.FORMULA) (M:Map.S with type key = L.t)= struct
 
   module Interface = struct
-    module Formula = Literal(A)
+    module Formula = L
     type proof = ()
   end
 
@@ -76,25 +81,29 @@ module Solver (A:Atom) (M:Map.S with type key = A.t)= struct
 
   let map_to_formula m =
     OSeq.fold Formula.(&&) Formula.One begin
-      M.to_seq m |> OSeq.map (fun (a,b) -> (b,a)) |> OSeq.map lit_to_formula
+      M.to_seq m |> OSeq.map (function (a,true) -> a | (a,false) -> L.neg a) |> OSeq.map (fun a -> Formula.Var a)
     end
 
   (* Because the module Formula is overridden by the include. *)
   let pp_formula = Formula.pp
 
-  let map_to_and_print_formula m =
-    let f = map_to_formula m in
-    Logs.debug (fun m -> m "produce: %a@." (fun fmt f -> pp_formula (fun a fmt -> A.pp fmt a) f fmt) f);
-    f
+  (* XXX: move? *)
+  (* let map_to_and_print_formula m =
+   *   let f = map_to_formula m in
+   *   Logs.debug (fun m -> m "produce: %a@." (fun fmt f -> pp_formula (fun a fmt -> A.pp fmt a) f fmt) f);
+   *   f *)
 
   include Msat.Make_pure_sat(Interface)
 
-  let assume_formulas solver formulas =
-    OSeq.iter (fun f ->
-        let f' = Interface.Formula.cnf f in
-        Logs.debug (fun m -> m "assume: %a@." (fun fmt f -> pp_formula (fun a fmt -> A.pp fmt a) f fmt) f);
-        Logs.debug (fun m -> m "assume: %a@." (CCList.pp (CCList.pp  ~start:"[" ~stop:"]" Interface.Formula.pp)) f');
-        assume solver f' ()) formulas
+  (* XXX: remove? *)
+  (* let assume_formulas solver formulas =
+   *   OSeq.iter (fun f ->
+   *       let f' = Interface.Formula.cnf f in
+   *       Logs.debug (fun m -> m "assume: %a@." (fun fmt f -> pp_formula (fun a fmt -> A.pp fmt a) f fmt) f);
+   *       Logs.debug (fun m -> m "assume: %a@." (CCList.pp (CCList.pp  ~start:"[" ~stop:"]" Interface.Formula.pp)) f');
+   *       assume solver f' ()) formulas *)
+
+  let assume_clauses solver clauses = OSeq.iter (fun c -> assume solver [c] ()) clauses
 
   let next solver observe =
     match solve solver with
@@ -103,11 +112,11 @@ module Solver (A:Atom) (M:Map.S with type key = A.t)= struct
           Array.to_seq observe
           |> OSeq.filter_map begin fun a ->
             try
-              let v = sat.eval (true, a) in
-              let _ = Logs.debug (fun m -> m "observe: %a=%b@." A.pp a v) in
+              let v = sat.eval a in
+              let _ = Logs.debug (fun m -> m "observe: %a=%b@." L.pp a v) in
               Some (a, v)
             with UndecidedLit ->
-              let _ = Logs.debug (fun m -> m "observe: %a undecided@." A.pp a) in
+              let _ = Logs.debug (fun m -> m "observe: %a undecided@." L.pp a) in
               None
           end
         end
@@ -116,12 +125,12 @@ module Solver (A:Atom) (M:Map.S with type key = A.t)= struct
 
   let neg_clause_of_map m =
     List.of_seq begin
-      M.to_seq m |> OSeq.map (fun (a,b) -> (not b, a))
+      M.to_seq m |> OSeq.map (function (a,true) -> L.neg a | (a,false) -> a)
     end
 
   let successive_formulas solver observe =
     OSeq.of_gen begin fun () ->
-      CCOpt.map (fun m -> assume solver [neg_clause_of_map m] (); map_to_and_print_formula m) (next solver observe)
+      CCOpt.map (fun m -> assume solver [neg_clause_of_map m] (); map_to_formula m) (next solver observe)
     end
 
 end

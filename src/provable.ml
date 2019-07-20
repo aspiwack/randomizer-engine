@@ -55,6 +55,11 @@ type 'a timed =
   | At of 'a * int
   | Selection of 'a
 
+let map_timed f = function
+  | Action (s, i) -> Action (s, i)
+  | At (a, i) -> At (f a, i)
+  | Selection a -> Selection (f a)
+
 let hash h = function
   | Action (name,t) -> CCHash.(combine3 (int 0) (string name) (int t))
   | At (a,t) -> CCHash.(combine3 (int 1) (h a) (int t))
