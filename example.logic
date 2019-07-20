@@ -1,0 +1,27 @@
+[Ranges]
+
+all =
+  { "Kakariko Well", "Blind's Hideout", "Eastern Small Chest", "Eastern Big Chest", "Eastern Boss",
+  "Desert Torch", "Desert Big Chest", "Desert Boss"}.
+"Eastern Palace" = { "Eastern Small Chest", "Eastern Big Chest", "Eastern Boss"}.
+"Desert Palace" = { "Desert Torch", "Desert Big Chest", "Desert Boss"}.
+
+Sword ∈ all.
+Bow ∈ all.
+Boots ∈ all.
+"Power Glove" ∈ all.
+"Eastern Big Key" ∈ "Eastern Palace".
+"Desert Big Key" ∈ "Desert Palace".
+
+[Rules]
+reach: "Eastern Boss" :- have: Bow, have: Sword, have: "Eastern Big Key".
+reach: "Desert Boss" :- have: "Power Glove", have: Sword, have: "Desert Big Key".
+reach: "Desert Torch" :- have: "Boots".
+reach: "Kakariko Well" :-.
+reach: "Blind's Hideout" :-.
+reach: "Eastern Small Chest" :-.
+reach: "Eastern Big Chest" :- have: "Eastern Big Key".
+reach: "Desert Big Chest" :- have: "Desert Big Key".
+
+[Goal]
+reach: "Desert Boss".

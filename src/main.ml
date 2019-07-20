@@ -46,10 +46,13 @@ type clause = {
   requires: item atom list
 }
 
+module StringMap = Map.Make(CCString)
+
 type program = {
   locations: location list;
   pool: item list;
   range_constraints: range_constraint list;
+  range_definitions: location list StringMap.t;
   logic: clause list;
   goal: item atom
 }
@@ -73,6 +76,21 @@ let print_timed_atom print_item = let open Provable in function
   | Selection a -> print_atom print_item a
   | At(a,i) -> print_atom print_item a ^ " @ " ^ string_of_int i
   | Action (n, i) -> n ^ " @ " ^ string_of_int i
+
+let pp_clause fmt {goal;requires} =
+  let pp_atom fmt a = CCString.pp fmt (print_atom print_item a) in
+  Format.fprintf fmt "%a :- @[<hov>%a@]" pp_atom goal (CCList.pp ~sep:"," pp_atom) requires
+let pp_range fmt {scrutinee;range} =
+  Format.fprintf fmt "%s ∈ {%a}" scrutinee (CCList.pp CCString.pp) range
+let pp_program fmt prog =
+  (* XXX: I'm not printing range_definitions *)
+  let pp_locations = CCList.pp (fun fmt l -> Format.fprintf fmt "@[<h>%s@]" l) in
+  let pp_pool = CCList.pp (fun fmt i -> Format.fprintf fmt "@[<h>%s@]" i) in
+  let pp_ranges = CCList.pp pp_range in
+  let pp_logic = CCList.pp pp_clause in
+  let pp_goal fmt g = Format.fprintf fmt "%s." (print_atom print_item g) in
+  Format.fprintf fmt "@[<v>@[<v 2>[Locations]@,%a@]@,@[<v 2>[Pool]@,%a@]@,@[<v 2>[Ranges]@,%a@]@,@[<v 2>[Logic]@,%a@]@,@[<v 2>[Goal]@,%a@]@]@." pp_locations prog.locations pp_pool prog.pool pp_ranges prog.range_constraints pp_logic prog.logic pp_goal prog.goal
+
 
 let (&&&) = MLBDD.dand
 let (|||) = MLBDD.dor
@@ -268,7 +286,7 @@ let femto_example =
     {goal=Reach eastern_boss; requires=[Have (sword, 1)]};
     {goal=Reach well; requires=[]};
   ] in
-  { locations; pool; range_constraints; logic; goal }
+  { locations; pool; range_constraints; range_definitions=StringMap.empty; logic; goal }
 
 let micro_example =
   (* A bit of early Alltp logic *)
@@ -294,7 +312,7 @@ let micro_example =
     {goal=Reach hideout; requires=[]};
     {goal=Reach eastern_chest; requires=[]};
   ] in
-  { locations; pool; range_constraints; logic; goal }
+  { locations; pool; range_constraints; range_definitions=StringMap.empty; logic; goal }
 
 let mini_example =
   (* A bit of early Alltp logic *)
@@ -325,7 +343,7 @@ let mini_example =
     {goal=Reach eastern_chest; requires=[Have (eastern_big, 1)]};
     {goal=Reach eastern_big_chest; requires=[]};
   ] in
-  { locations; pool; range_constraints; logic; goal }
+  { locations; pool; range_constraints; range_definitions=StringMap.empty; logic; goal }
 
 let example =
   (* A bit of early Alltp logic *)
@@ -369,7 +387,7 @@ let example =
     {goal=Reach eastern_big_chest; requires=[Have (eastern_big, 1)]};
     {goal=Reach desert_big_chest; requires=[Have (desert_big, 1)]};
   ] in
-  { locations; pool; range_constraints; logic; goal }
+  { locations; pool; range_constraints; range_definitions=StringMap.empty; logic; goal }
 
 let print_to_dot legend b ~file =
   (* Adapted from Jean-Christophe Filliâtre's bdd library*)
@@ -411,9 +429,83 @@ let print_to_dot legend b ~file =
   fprintf fmt "}@.";
   close_out c
 
+let parse_file (filename : String.t) =
+  let chan = open_in filename in
+  let lexbuf = Sedlexing.Utf8.from_channel chan in
+  let supplier () =
+    let tok = Lexer.tokenise lexbuf in
+    let (startp, endp) = Sedlexing.lexing_positions lexbuf in
+    (tok, startp, endp)
+  in
+  let starting_point = Parser.Incremental.program (fst (Sedlexing.lexing_positions lexbuf)) in
+  let interp_range_expression prog = function
+    | Grammar.RangeLiteral locs -> locs
+    | Grammar.RangeIdent id -> StringMap.find id prog.range_definitions
+  in
+  let accumulate_range prog = function
+    | Grammar.RangeDecl (item, range_expr) ->
+      let locs = interp_range_expression prog range_expr in
+      let range = {scrutinee=item; range=locs} in
+      { prog with
+        pool = item :: prog.pool;
+        locations = locs @ prog.locations;
+        range_constraints = range :: prog.range_constraints;
+      }
+    | Grammar.RangeDef (ident, range_expr) ->
+      let locs = interp_range_expression prog range_expr in
+      { prog with
+        range_definitions = StringMap.add ident locs prog.range_definitions;
+      }
+  in
+  let convert_atom = function
+    | Grammar.Have item -> Have(item, 1)
+    | Grammar.Reach loc -> Reach loc
+  in
+  let accumulate_rule prog (goal, requires) =
+    let clause =
+      { goal = convert_atom goal;
+        requires = List.map convert_atom requires;
+      }
+    in
+    { prog with
+      logic = clause :: prog.logic;
+    }
+  in
+  (* XXX: we shouldn't need to uniquise the location, instead we
+     should have an authoritative list of locations in the logic
+     file. *)
+  let uniquise_locations prog =
+    let uniquise = CCList.sort_uniq ~cmp:CCString.compare in
+    { prog with locations = uniquise prog.locations }
+  in
+  match Parser.MenhirInterpreter.loop supplier starting_point with
+  | sections ->
+    let act prog = function
+      | Grammar.Ranges rs ->
+        List.fold_left accumulate_range prog rs
+      | Grammar.Rules rs ->
+        List.fold_left accumulate_rule prog rs
+      | Grammar.Goal g -> { prog with goal=convert_atom g }
+    in
+    let raw_program =
+      List.fold_left act { goal=(Reach "Dummy land"); pool=[]; locations=[]; range_constraints=[]; range_definitions=StringMap.empty; logic=[] } sections
+    in
+    let computed_program = uniquise_locations raw_program in
+    let _ = Logs.debug (fun m -> m "%a." pp_program computed_program) in
+    computed_program
+  | exception Grammar.ParseError (Some (startp, endp), msg) -> (* XXX: partial pattern matching!! *)
+    let format_pos fmt p =
+      let open Lexing in
+      Format.fprintf fmt "%i: %i" p.pos_lnum (p.pos_cnum - p.pos_bol)
+    in
+    (* XXX: Needs to go through the logging thing *)
+    let _ = Format.printf "%s: %a — %a@." msg format_pos startp format_pos endp in
+    exit 1
+
 let _ =
   let _ = Logs.set_reporter (Logs_fmt.reporter ()) in
   let _ = Logs.set_level (Some Logs.Debug) in
+  let example = parse_file "example.logic" in
   let (bdd, legend) = compile_to_bdd example in
   let module Params = struct
     type t = int (* XXX: ints might not be enough *)
