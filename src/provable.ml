@@ -65,7 +65,49 @@ let hash h = function
   | At (a,t) -> CCHash.(combine3 (int 1) (h a) (int t))
   | Selection a -> CCHash.(combine2 (int 2) (h a))
 
-module StringSet = Set.Make(struct type t=string let compare=compare end)
+let equal equal_atom t u = match t, u with
+  | Action (namet,tt), Action(nameu,tu) -> CCString.equal namet nameu && CCInt.equal tt tu
+  | At(at,tt), At(au,tu) -> equal_atom at au && CCInt.equal tt tu
+  | Selection at, Selection au -> equal_atom at au
+  | _ -> false
+
+let compare compare_atom t u = match t, u with
+  | Action (namet,tt), Action(nameu,tu) -> CCOrd.(string namet nameu <?> (int, tt, tu))
+  | Action _, _ -> -1
+  | _, Action _ -> 1
+  | At(at,tt), At(au,tu) -> CCOrd.(compare_atom at au <?> (int, tt, tu))
+  | At _, _ -> -1
+  | _, At _ -> 1
+  | Selection at, Selection au -> compare_atom at au
+  (* | Selection _, _ -> -1
+   * | _, Selection _ -> 1 *)
+
+let pp_timed_atom pp_atom fmt = function
+  | Selection a -> pp_atom fmt a
+  | At(a,i) -> Format.fprintf fmt "%a @@%i" pp_atom a i
+  | Action (n, i) -> Format.fprintf fmt "%s @@%i" n i
+
+module MakeTimed(A:Types.Type) = struct
+
+  module Core = struct
+    type t = A.t timed
+
+    let equal = equal A.equal
+    let compare = compare A.compare
+    let hash = hash A.hash
+
+    let pp = pp_timed_atom A.pp
+  end
+
+  include Core
+
+  module Set = Set.Make(Core)
+  module Map = Map.Make(Core)
+
+end
+
+(* XXX: how many copies of StringSet is there? *)
+module StringSet = Set.Make(struct type t=string let compare=String.compare end)
 
 module Make (M : Map.S) = struct
 
@@ -79,14 +121,15 @@ module Make (M : Map.S) = struct
    *)
 
   module type Params = sig
-    val timed : StringSet.t M.t
+    val selection : atom -> bool
+    val timed : StringSet.t M.t (* XXX: timed in an obsolete names, it is really the collection of conclusion of rules. *)
     val max_steps : int
   end
 
   module MainLoop (P : Params) = struct
 
     let at (i:int) (a : atom) : formula =
-      if M.mem a P.timed then Formula.var @@ At(a,i)
+      if not (P.selection a) then Formula.var @@ At(a,i)
       else Formula.var @@ Selection a
 
     let action_var (i:int) (name : string) : formula =
@@ -123,7 +166,7 @@ module Make (M : Map.S) = struct
       Formula.((conj_map (at i) c.hyps && not (at i c.concl))--> name i c)
   end
 
-  let convert (prog : atom program) : formula Seq.t =
+  let convert (prog : atom program) (selection : atom -> bool) : formula Seq.t =
     let _ = Logs.debug (fun m -> m "%i@." (List.length prog.clauses)) in
     let add_add a n m =
       let upd = function
@@ -137,7 +180,7 @@ module Make (M : Map.S) = struct
       List.fold_left (fun acc c -> add_add c.concl c.name acc) M.empty (prog.clauses)
     in
     let max_steps = List.length (prog.clauses) in
-    let module L = MainLoop (struct let timed=timed let max_steps=max_steps end) in
+    let module L = MainLoop (struct let timed=timed let max_steps=max_steps let selection=selection end) in
     let initial_state =
       Formula.conj_seq begin
         M.to_seq timed
