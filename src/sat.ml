@@ -6,6 +6,7 @@ module type Atom = sig
   val equal : t -> t -> bool
   val hash : t -> int
   val pp : Format.formatter -> t -> unit
+  val compare : t -> t -> int
 end
 
 module Literal (A:Atom) = struct
@@ -23,6 +24,9 @@ module Literal (A:Atom) = struct
   let pp fmt (n,a) =
     if n then A.pp fmt a
     else Format.fprintf fmt "~%a" A.pp a
+
+  let compare =
+    CCOrd.pair CCBool.compare A.compare
 
   let neg (n,a) = (not n, a)
 

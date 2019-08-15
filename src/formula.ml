@@ -35,7 +35,7 @@ let rec vars = function
   | Impl (x,y) -> Seq.flat_map vars (List.to_seq [x;y])
   | Not x -> vars x
 
-let pp pp_var f fmt =
+let pp pp_var fmt f =
   let and_prec = 2
   and or_prec = 3
   and impl_prec = 1
@@ -45,7 +45,7 @@ let pp pp_var f fmt =
     match f with
     | One -> Format.fprintf fmt "1"
     | Zero -> Format.fprintf fmt "0"
-    | Var x -> pp_var x fmt
+    | Var x -> pp_var fmt x
     | And (x,y) when prec <= and_prec -> Format.fprintf fmt "%t && %t" (pp and_prec x) (pp and_prec y)
     | Or (x,y) when prec <= or_prec -> Format.fprintf fmt "%t || %t" (pp or_prec x) (pp or_prec y)
     | Impl (x,y) when prec <= impl_prec -> Format.fprintf fmt "%t --> %t" (pp (impl_prec+1)x) (pp impl_prec y)
