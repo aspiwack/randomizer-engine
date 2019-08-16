@@ -16,6 +16,7 @@ Steps:
 - Implement example sampler
 - Parse programs
 *)
+
 open Types
 let (&&&) = MLBDD.dand
 let (|||) = MLBDD.dor
@@ -42,54 +43,27 @@ end
 
 module Compile (P : CompileArg) = struct
 
-  let indexed (i:Item.t) : IndexedItem.t Seq.t =
-    let open OSeq in
-    let n = List.assoc i P.the_program.pool in
-    (0 --^ n) >>= fun j ->
-    return @@ IndexedItem.make i j
+  module Phase = Phases.Make(P)
 
-  module LiteralsWithMults = struct
-    include TimedIndexedLiteral
-    type u = TimedLiteral.t
+  let pipeline =
+    let open Phases in
+    let open Phase in
+    to_provable
+    *> convertProvable
+    *> accrueAssignConstraint
+    *> adjoinObservables
+    *> (convertToCnf ** observablesToLiterals)
+    *> (compileMult ** indexObservables)
 
-    let norm_u = TimedLiteral.norm
-
-    let decomp ((neg,l) : u) : (t list * int)=
-      let decomp_atom = function
-        | Atom.Have (MultipliedOrIndexed.Left (i,k)) ->
-          let individualised =
-            List.of_seq begin
-              let open OSeq in
-              indexed i >>= fun ii ->
-              return @@ Atom.Have ii
-            end
-          in
-          (individualised, k)
-        | a -> ([Atom.map (function MultipliedOrIndexed.Left _ -> assert false | Right i -> i) (fun i -> i) a], 1)
-      in
-      let decomp_timed_atom = function
-        | Provable.Action (s, i) -> [Provable.Action (s,i)], 1
-        | Provable.At (a, i) ->
-          let (individualised, k) = decomp_atom a in
-          List.map (fun b -> Provable.At(b,i)) individualised, k
-        | Provable.Selection a ->
-          let (individualised, k) = decomp_atom a in
-          List.map (fun b -> Provable.Selection b) individualised, k
-      in
-      let (invidualised, k) = decomp_timed_atom l in
-      List.map (fun a -> (neg,a)) invidualised, k
-  end
-  module Mult = Multiplicity.Make(LiteralsWithMults)
-
-  let invert_array (arr : Mult.L.t array) : int Mult.L.Map.t =
+  let invert_array (arr : Phase.Mult.L.t array) : int Phase.Mult.L.Map.t =
     Array.to_seqi arr |>
-    Seq.fold_left (fun acc (i,a) -> Mult.L.Map.add a i acc) Mult.L.Map.empty
+    Seq.fold_left (fun acc (i,a) -> Phase.Mult.L.Map.add a i acc) Phase.Mult.L.Map.empty
 
-  let compile_formula man var_index (f : Mult.L.t Formula.t) : MLBDD.t =
-    let mk_var (l : Mult.L.t) : MLBDD.t =
-      match Mult.L.norm l with
-      | (a, Msat.Negated) -> MLBDD.dnot @@ MLBDD.ithvar man (Mult.L.Map.find a var_index)
-      | (a, Msat.Same_sign) -> MLBDD.ithvar man (Mult.L.Map.find a var_index)
+  let compile_formula man var_index (f : Phase.Mult.L.t Formula.t) : MLBDD.t =
+    let mk_var (l : Phase.Mult.L.t) : MLBDD.t =
+      match Phase.Mult.L.norm l with
+      | (a, Msat.Negated) -> MLBDD.dnot @@ MLBDD.ithvar man (Phase.Mult.L.Map.find a var_index)
+      | (a, Msat.Same_sign) -> MLBDD.ithvar man (Phase.Mult.L.Map.find a var_index)
     in
     let rec compile = let open Formula in function
         | Zero -> MLBDD.dfalse man
@@ -102,166 +76,14 @@ module Compile (P : CompileArg) = struct
     in
     compile f
 
-  let collect_program_atoms (p : program) : AtomSet.t =
-    let atoms : (Item.t, Item.t) Atom.t Seq.t =
-      List.to_seq p.pool |>
-      Seq.flat_map (fun (i,_) ->
-          List.to_seq p.locations |>
-          Seq.flat_map (fun l -> List.to_seq [Atom.Assign(l,i)]))
-    in
-    AtomSet.of_seq atoms
+  module Solver = Sat.Solver(Phase.Mult.L)(Phase.Mult.L.Map)
 
-  let gen_rule_name : unit -> string =
-    let count = ref 0 in
-    fun () ->
-      let r = "Rule " ^ string_of_int (!count) in
-      incr count;
-      r
-
-  module Solver = Sat.Solver(Mult.L)(Mult.L.Map)
-
-  let to_bdd (p : program) : (MLBDD.t * Mult.L.t array) =
-    let assign (i : IndexedItem.t) (l : Location.t) : formula =
-      Formula.var (Provable.Selection (Atom.Assign(l,i)))
-    in
-    let clause (c : Clause.t) : (MultipliedOrIndexed.t, IndexedItem.t) Atom.t Provable.clause =
-      let open Provable in
-      let open Clause in
-      let cast = Atom.map (fun i-> MultipliedOrIndexed.Left i) (Empty.absurd) in
-      {
-        hyps=List.map cast c.requires;
-        concl= cast c.goal;
-        name=gen_rule_name ()
-      }
-    in
-    let range (p : program) (r : RangeConstraint.t) : formula =
-      let at_least = Formula.conj_map_seq begin fun i ->
-          Formula.disj_map (fun l -> assign i l) r.range
-        end (indexed r.scrutinee)
-      in
-      (* XXX: consider generating at_most/only constraint independently
-         from the range, on _all_ locations. *)
-      let at_most =
-        let ordered_pairs_of_locations =
-          let open OSeq in
-          begin
-            List.to_seq r.range >>= fun l ->
-            List.to_seq r.range >>= fun l' ->
-            return (l,l')
-          end |>
-          Seq.filter (fun (l,l') -> Location.compare l l' < 0)
-        in
-        (* Careful: these are largely order while the above are strictly ordered. *)
-        let ordered_pairs_of_items =
-          let open OSeq in
-          begin
-            indexed r.scrutinee >>= fun i ->
-            indexed r.scrutinee >>= fun i' ->
-            return (i,i')
-          end |>
-          Seq.filter (fun (i,i') -> IndexedItem.compare i i' <= 0)
-        in
-        let open Formula in
-        conj_seq begin
-          let open OSeq in
-          ordered_pairs_of_items >>= fun (i,i') ->
-          ordered_pairs_of_locations >>= fun (l,l') ->
-          return @@ not (assign i l' && assign i' l)
-        end
-      in
-      let only =
-        let other_locations =
-          List.to_seq p.locations |>
-          OSeq.filter (fun l -> not (List.mem l r.range))
-        in
-        let open Formula in
-        let open OSeq in
-        conj_seq begin
-          indexed r.scrutinee >>= fun i ->
-          other_locations >>= fun l ->
-          return @@ not (assign i l)
-        end
-      in
-      Formula.(at_least && at_most && only)
-    in
-    let ranges_formula = Seq.map (range p) (List.to_seq p.range_constraints) in
-    let capacity (p : program) (l : Location.t) : formula =
-      let distinct_pairs =
-        let all_items =
-          List.to_seq p.pool
-          |> Seq.flat_map (fun (i,_) -> indexed i)
-        in
-        begin
-          let open OSeq in
-          all_items >>= fun i ->
-          all_items >>= fun i' ->
-          return (i, i')
-        end |>
-        Seq.filter (fun (i,i') -> not (IndexedItem.equal i i'))
-      in
-      let open Formula in
-      conj_map (fun (i,i') -> not (assign i l && assign i' l)) (List.of_seq distinct_pairs)
-      (* XXX: There is probably a bug here: these are defined in terms
-         of items, I'm pretty sure they should be defined in terms of
-         indexed_items. *)
-    in
-    let capacities_formula = Seq.map (capacity p) (List.to_seq p.locations)
-    in
-    let logic_clauses = List.map clause p.logic in
-    let assign_clauses =
-      List.of_seq begin
-        let open OSeq in
-        List.to_seq p.pool >>= fun (i,_) ->
-        indexed i >>= fun ii ->
-        List.to_seq p.locations >>= fun l ->
-        return begin
-          let open Provable in {
-              hyps = [ Atom.Reach l; Atom.Assign(l,ii) ];
-              concl = Atom.Have (MultipliedOrIndexed.Right ii);
-              name = gen_rule_name ()
-          }
-        end
-      end
-    in
-    let module Prove = Provable.Make(IndexedAssignmentAtom.Map) in
-    let proof_system = Prove.convert {
-        clauses = logic_clauses @ assign_clauses;
-        goal =
-          let convert_multiple = function
-            | (i,1) -> MultipliedOrIndexed.Right (IndexedItem.make i 0)
-            (* XXX: it's actually incorrect if there are several copies of i. *)
-            | _ -> failwith "TODO: goals with multiplicities"
-          in
-          Atom.map convert_multiple Empty.absurd p.goal
-      } (function Atom.Assign _ -> true | _ -> false)
-    in
-    let _ = OSeq.iter (fun f -> Logs.debug (fun m -> m "Converted: %a@." (Formula.pp TimedAtom.pp) f)) proof_system in
-    let formulas = OSeq.flatten @@ OSeq.of_list
-        [ ranges_formula;
-          capacities_formula;
-          proof_system
-        ]
-    in
-    let clauses = formulas  |> OSeq.flat_map TimedLiteral.cnf_seq in
-    let clauses = Mult.compile (List.of_seq clauses) in
-    (* XXX: the range and capacity formulas should directly be crafted in terms of the multiplicity transformation output. *)
-    let atoms =
-      OSeq.(formulas >>= Formula.vars)
-      |> TimedAtom.Set.of_seq
-      |> TimedAtom.Set.to_seq
-      |> Array.of_seq
-    in
-    let observable =
-      CCArray.filter (fun a -> match a with Provable.Selection (Atom.Assign _) -> true | _ -> false) atoms
-      |> Array.map (Provable.map_timed (Atom.map (fun _ -> assert false) (fun i -> i)))
-      |> Array.map TimedIndexedLiteral.of_atom
-      |> Array.map (fun a -> Mult.Individual a)
-    in
+  let to_bdd (p : program) : (MLBDD.t * Phase.Mult.L.t array) =
+    let (clauses, observable) = Phases.run pipeline p in
     let var_index = invert_array observable in
     let man = MLBDD.init () in
     let solver = Solver.create () in
     let _ = Solver.assume_clauses solver (List.to_seq clauses) in
-    (* NEXT: change observable to have elements of type Mult.atom. It's really the only way *)
     Solver.successive_formulas solver observable
     |> Seq.map (compile_formula man var_index)
     |> OSeq.fold (|||) (MLBDD.dfalse man)
@@ -518,7 +340,7 @@ let _ =
     let the_vars = Array.mapi (fun i _ -> i+1) legend
 
     let pp fmt i =
-      Format.fprintf fmt "%a" Comp.Mult.L.pp legend.(i)
+      Format.fprintf fmt "%a" Comp.Phase.Mult.L.pp legend.(i)
 
   end in
   let module Z = Zdd.Make(Params)(Vars) in
