@@ -17,6 +17,8 @@ Steps:
 - Parse programs
 *)
 
+open Datalog
+
 open Types
 let (&&&) = MLBDD.dand
 let (|||) = MLBDD.dor
