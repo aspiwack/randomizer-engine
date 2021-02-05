@@ -108,7 +108,7 @@ module RelAlg = struct
     | Proj of int list * expr (* all indices in range *)
 
   type formula =
-    | Some of expr  (* the relation is non-empty *)
+    | ExistsSome of expr  (* the relation is non-empty *)
 
 
   type binding = {
@@ -163,19 +163,6 @@ module RelAlg = struct
       List.to_iter atoms >>= fun a ->
       return (a :: tuple)
 
-  (* TODO: initialise the environment with values for all the
-  /instance/ relations. Right now they are fully unconstrained, so
-  they are basically a full matrix together with a boolean value per
-  cell. We are going to get a lot of mileage in the future by
-  restricting the possible variables /a priori/. A good way to obtain
-  such restriction is with types. *)
-
-  (* XXX: note that union and intersection below, to preserve the
-    invariants that all keys have the same length need to apply to
-    relations with the same arity. It would probably be healthy to do
-    a pass of arity checking on relation expressions before compiling
-    them. *)
-
   (* XXX: should really be in the `Rel` module (and the current `Rel`
   module shouldn't actually be named that, or exposed for that matter)*)
   let of_iter : (atom list * satvar Formula.t) Iter.t -> rel = fun pairs ->
@@ -185,12 +172,48 @@ module RelAlg = struct
       | None -> Some f
       | Some f' -> Some Formula.( f' || f )
     in
-    let of_iter_disj : (Rel.key * satvar Formula.t) Iter.t -> rel = fun kvs ->
+    let of_iter_disj kvs =
       let m = ref Rel.empty in
       kvs (fun (k, v) -> m := Rel.update k (combine v) !m);
       !m
     in
     of_iter_disj (Iter.filter not_false pairs)
+
+  (* TODO: Right now, the instance relations are fully unconstrained,
+     so they are basically a full matrix together with a boolean value
+     per cell. We are going to get a lot of mileage in the future by
+     restricting the possible variables /a priori/. A good way to
+     obtain such restriction is with types. *)
+  (* TODO: can I keep a reverse mapping var -> tuple*declaration so
+    that I can print meaningful feedback? *)
+  let init_instance : atom list -> declaration list -> env =
+    let new_var =
+      let c = ref 0 in
+      fun () ->
+        let r = !c in
+        incr c;
+        r
+    in
+    fun atoms decls ->
+      let init_decl : declaration -> declaration * rel = fun decl ->
+        let new_rel =
+          of_iter begin
+              tuples atoms (decl.arity)
+              |> Iter.map (fun tuple -> (tuple, Formula.Var (new_var ())))
+            end
+        in
+        (decl, new_rel)
+      in
+      decls
+      |> List.to_iter
+      |> Iter.map init_decl
+      |> Env.of_iter
+
+  (* XXX: note that union and intersection below, to preserve the
+    invariants that all keys have the same length need to apply to
+    relations with the same arity. It would probably be healthy to do
+    a pass of arity checking on relation expressions before compiling
+    them. *)
 
   let rec compile_expr : atom list -> env -> expr -> rel = fun atoms env e ->
     match e with
@@ -233,7 +256,20 @@ module RelAlg = struct
              (fun (tuple, _) -> String.equal (List.nth tuple i) a)
              (compile_expr atoms env r |> Rel.to_iter)
          end
-    | Proj (_, _) -> (??)
+    | Proj (is, r) ->
+       of_iter begin
+           compile_expr atoms env r
+           |> Rel.to_iter
+           |> Iter.map (fun (tuple, f) -> (List.map (List.nth tuple) is, f))
+          end
+
+  let compile_formula : atom list -> env -> formula -> satvar Formula.t = fun atoms env f ->
+     match f with
+     | ExistsSome r ->
+        compile_expr atoms env r
+        |> Rel.to_iter
+        |> Iter.map snd
+        |> Iter.fold Formula.(||) Formula.Zero
 
 end
 
@@ -321,7 +357,7 @@ let compile_goal : literal list -> RelAlg.formula = fun g ->
       end
       pre_constr offseted
   in
-  RelAlg.Some (filtered_constr)
+  RelAlg.ExistsSome (filtered_constr)
 
 
 
