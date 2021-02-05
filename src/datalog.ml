@@ -147,6 +147,8 @@ module RelAlg = struct
     really know, yet, how do do this optimisation while keeping the
     implementation complexity reasonable.
      *)
+  (* XXX: maybe we don't want to use Formula, actually but bdds
+    directly. *)
   type rel = satvar Formula.t Rel.t
 
   module Env = Map.Make (struct type t = declaration let compare = Stdlib.compare end)
@@ -156,9 +158,10 @@ module RelAlg = struct
   let rec tuples : atom list -> int -> atom list Iter.t = fun atoms arity ->
     if arity <= 0 then Iter.singleton []
     else
-      tuples atoms (arity-1)
-      |> Iter.flat_map (fun tuple -> List.to_iter atoms
-      |> Iter.flat_map (fun a -> Iter.singleton (a :: tuple)))
+      let open Iter in
+      tuples atoms (arity-1) >>= fun tuple ->
+      List.to_iter atoms >>= fun a ->
+      return (a :: tuple)
 
   (* TODO: initialise the environment with values for all the
   /instance/ relations. Right now they are fully unconstrained, so
@@ -167,10 +170,32 @@ module RelAlg = struct
   restricting the possible variables /a priori/. A good way to obtain
   such restriction is with types. *)
 
+  (* XXX: note that union and intersection below, to preserve the
+    invariants that all keys have the same length need to apply to
+    relations with the same arity. It would probably be healthy to do
+    a pass of arity checking on relation expressions before compiling
+    them. *)
+
+  (* XXX: should really be in the `Rel` module (and the current `Rel`
+  module shouldn't actually be named that, or exposed for that matter)*)
+  let of_iter : (atom list * satvar Formula.t) Iter.t -> rel = fun pairs ->
+    let not_false = function (_, Formula.Zero) -> false | _ -> true in
+    let combine : satvar Formula.t -> satvar Formula.t option -> satvar Formula.t option
+      = fun f -> function
+      | None -> Some f
+      | Some f' -> Some Formula.( f' || f )
+    in
+    let of_iter_disj : (Rel.key * satvar Formula.t) Iter.t -> rel = fun kvs ->
+      let m = ref Rel.empty in
+      kvs (fun (k, v) -> m := Rel.update k (combine v) !m);
+      !m
+    in
+    of_iter_disj (Iter.filter not_false pairs)
+
   let rec compile_expr : atom list -> env -> expr -> rel = fun atoms env e ->
     match e with
     | Var r -> Env.find r env
-    | Top arity -> Rel.of_iter (Iter.map (fun tuple -> (tuple, Formula.one)) (tuples atoms arity))
+    | Top arity -> of_iter (Iter.map (fun tuple -> (tuple, Formula.one)) (tuples atoms arity))
     | Inter (r1, r2) ->
        Rel.merge_safe
          (compile_expr atoms env r1)
@@ -178,11 +203,36 @@ module RelAlg = struct
          ~f:begin fun _ -> function
               | `Left _ | `Right _ -> None
               | `Both (f1,f2) -> Some Formula.( f1 && f2 )
+                                      (* XXX: this could be zero*)
          end
-    | Union (_, _) -> (??)
-    | Cross (_, _) -> (??)
-    | Same (_, _, _) -> (??)
-    | EqAtom (_, _, _) -> (??)
+    | Union (r1, r2) ->
+       Rel.merge_safe
+         (compile_expr atoms env r1)
+         (compile_expr atoms env r2)
+         ~f:begin fun _ -> function
+              | `Left f1 -> Some f1
+              | `Right f2 -> Some f2
+              | `Both (f1,f2) -> Some Formula.( f1 || f2 )
+         end
+    | Cross (r1, r2) ->
+       of_iter begin
+           let open Iter in
+           (compile_expr atoms env r1 |> Rel.to_iter) >>= fun (tuple1, f1) ->
+           (compile_expr atoms env r2 |> Rel.to_iter) >>= fun (tuple2, f2) ->
+           return (tuple1 @ tuple2, Formula.( f1 && f2 ))
+         end
+    | Same (i1, i2, r) ->
+       of_iter begin
+           Iter.filter
+             (fun (tuple, _) -> String.equal (List.nth tuple i1) (List.nth tuple i2))
+             (compile_expr atoms env r |> Rel.to_iter)
+         end
+    | EqAtom (i, a, r) ->
+       of_iter begin
+           Iter.filter
+             (fun (tuple, _) -> String.equal (List.nth tuple i) a)
+             (compile_expr atoms env r |> Rel.to_iter)
+         end
     | Proj (_, _) -> (??)
 
 end
