@@ -1,3 +1,5 @@
+open Containers
+
 (* Game plan for 2021:
 
 - Generalise the compilation engine (which takes a description of a
@@ -119,6 +121,70 @@ module RelAlg = struct
       bindings: binding list;
       constr: formula;
   }
+
+  module Rel = Map.Make(struct type t = atom list let compare = Stdlib.compare end)
+
+  (* TODO: a better name, and abstract compilation over *)
+  type satvar = int
+
+  (* The idea:
+     - All the keys have length the arity of the relation
+     - An absent key means `Zero`
+
+    It's just a finite boolean predicate. Where some values may be
+    unknown (crucially!) and will be offloaded to SAT. Then we can see
+    which of these values work.
+
+    In the Kodkod paper, they don't use lists of atoms directly but
+    encode them as integers. I doubt that it is really useful in
+    Ocaml, it's probably an artefact of their implementation
+    language. That's my guess anyway.
+
+    TODO(probably): in the Kodkod paper, they represent sequences of
+    contiguous `One` as a single interval thingy, rather than a bunch
+    of key-value pairs. Since our encoding uses the `Top` relation, we
+    can expect such an optimisation to be quite dramatic. But I don't
+    really know, yet, how do do this optimisation while keeping the
+    implementation complexity reasonable.
+     *)
+  type rel = satvar Formula.t Rel.t
+
+  module Env = Map.Make (struct type t = declaration let compare = Stdlib.compare end)
+
+  type env = rel Env.t
+
+  let rec tuples : atom list -> int -> atom list Iter.t = fun atoms arity ->
+    if arity <= 0 then Iter.singleton []
+    else
+      tuples atoms (arity-1)
+      |> Iter.flat_map (fun tuple -> List.to_iter atoms
+      |> Iter.flat_map (fun a -> Iter.singleton (a :: tuple)))
+
+  (* TODO: initialise the environment with values for all the
+  /instance/ relations. Right now they are fully unconstrained, so
+  they are basically a full matrix together with a boolean value per
+  cell. We are going to get a lot of mileage in the future by
+  restricting the possible variables /a priori/. A good way to obtain
+  such restriction is with types. *)
+
+  let rec compile_expr : atom list -> env -> expr -> rel = fun atoms env e ->
+    match e with
+    | Var r -> Env.find r env
+    | Top arity -> Rel.of_iter (Iter.map (fun tuple -> (tuple, Formula.one)) (tuples atoms arity))
+    | Inter (r1, r2) ->
+       Rel.merge_safe
+         (compile_expr atoms env r1)
+         (compile_expr atoms env r2)
+         ~f:begin fun _ -> function
+              | `Left _ | `Right _ -> None
+              | `Both (f1,f2) -> Some Formula.( f1 && f2 )
+         end
+    | Union (_, _) -> (??)
+    | Cross (_, _) -> (??)
+    | Same (_, _, _) -> (??)
+    | EqAtom (_, _, _) -> (??)
+    | Proj (_, _) -> (??)
+
 end
 
 (* We want to
@@ -206,5 +272,9 @@ let compile_goal : literal list -> RelAlg.formula = fun g ->
       pre_constr offseted
   in
   RelAlg.Some (filtered_constr)
+
+
+
+
 (*  LocalWords:  arity datalog
  *)
