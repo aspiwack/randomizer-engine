@@ -17,6 +17,7 @@
     containers
     msat
     logs
+    fmt
     hashcons
     sedlex
     menhir
