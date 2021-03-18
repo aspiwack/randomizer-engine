@@ -203,7 +203,11 @@ type program = {
 }
 
 let pp_clause fmt {Clause.goal;requires} =
-  Format.fprintf fmt "%a :- @[<hov>%a@]" (Atom.pp MultipliedItem.pp Empty.pp) goal (CCList.pp ~sep:"," (Atom.pp MultipliedItem.pp Empty.pp)) requires
+  Format.fprintf fmt "%a :- @[<hov>%a@]"
+    (Atom.pp MultipliedItem.pp Empty.pp)
+    goal
+    (CCList.pp ~pp_sep:CCFormat.(const string ",") (Atom.pp MultipliedItem.pp Empty.pp))
+    requires
 let pp_program fmt prog =
   (* XXX: I'm not printing range_definitions *)
   let pp_locations = CCList.pp (fun fmt l -> Format.fprintf fmt "@[<h>%s@]" l) in
