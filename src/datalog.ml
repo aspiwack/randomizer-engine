@@ -120,6 +120,7 @@ module RelAlg = struct
   }
 
   type prog = {
+      atoms: atom list;
       instance: declaration list;
       constr: formula;
   }
@@ -353,7 +354,7 @@ let get_derived : prog -> declaration list = fun prog ->
 
 let lattice_height : prog -> int = fun prog ->
   let get_decl_height : declaration -> int = fun d ->
-    d.arity * List.length prog.atoms
+    Int.pow (List.length prog.atoms) d.arity
   in
   prog |> get_derived |> List.map get_decl_height |> List.fold_left (+) 0
 
@@ -391,6 +392,7 @@ let compile_goal : RelAlg.expr Env.t -> literal list -> RelAlg.formula = fun env
 
 let compile_prog : prog -> RelAlg.prog = fun prog ->
   { RelAlg.instance = prog.instance;
+    atoms = prog.atoms;
     constr = compile_goal (Fun.iterate (lattice_height prog) (compile_and_inflate_rules prog.rules) (bottom_env prog)) prog.goal
   }
 
