@@ -68,6 +68,7 @@ type name = String.t
 type var = String.t
 type atom = String.t
 type declaration = { name: name; arity: int }
+module Env = Map.Make (struct type t = declaration let compare = Stdlib.compare end)
 
 type arg =
   | Var of var
@@ -82,6 +83,7 @@ type rule = {
 type goal = literal list
 
 type prog = {
+    atoms : atom list;
     instance: declaration list;
     rules: rule list;
     goal: goal;
@@ -100,6 +102,7 @@ module RelAlg = struct
   type expr =
     | Var of declaration
     | Top of int (* int is the arity *)
+    | Bottom of int (* int is the arity *)
     | Inter of expr * expr (* Same arity*)
     | Union of expr * expr (* Same arity*)
     | Cross of expr * expr
@@ -118,7 +121,6 @@ module RelAlg = struct
 
   type prog = {
       instance: declaration list;
-      bindings: binding list;
       constr: formula;
   }
 
@@ -150,8 +152,6 @@ module RelAlg = struct
   (* XXX: maybe we don't want to use Formula, actually but bdds
     directly. *)
   type rel = satvar Formula.t Rel.t
-
-  module Env = Map.Make (struct type t = declaration let compare = Stdlib.compare end)
 
   type env = rel Env.t
 
@@ -288,17 +288,23 @@ let rec index_of : ('a -> bool) -> 'a list -> int = fun p l ->
 let rule_arity : rule -> int = fun r ->
   r.head.root.arity
 
+let deref : declaration -> RelAlg.expr Env.t -> RelAlg.expr = fun d env ->
+  (* Assumption: either a relation is an instance relation, or, it's
+     defined in the environment *)
+  Env.get_or d env ~default:(Var d)
+
 (* TODOs:
 - Handle the case where there are atoms in the head of the rule
 - Handle recursion *)
-let compile_rule : rule -> RelAlg.expr = fun r ->
+let compile_rule : RelAlg.expr Env.t -> rule -> RelAlg.expr = fun env r ->
   (* A rule looks like this R(x, y) :- S(y), T(x, a)
    * - We first transform it to Top/2 × S × T
    * - Then apply Same/EqAtom corresponding to the variable/atom
    *   arguments of S and T.
    * - Finally, we project on the first two columns *)
   let n = rule_arity r in
-  let pre_rhs = RelAlg.(Cross (Top n, List.fold_left (fun acc l -> Cross(acc, Var (l.root))) (Top 0) r.rhs)) in
+  let pre_rhs = RelAlg.(Cross (Top n, List.fold_left (fun acc l ->
+                                          Cross(acc, deref (l.root) env)) (Top 0) r.rhs)) in
   let offsets = CCList.scan_left (fun o l -> o + l.root.arity) n r.rhs in
   let offseted = CCList.combine_shortest offsets r.rhs in
   let pos x = index_of (Stdlib.(=) (Var x)) (r.head.arguments) in
@@ -316,7 +322,7 @@ let compile_rule : rule -> RelAlg.expr = fun r ->
     in
   RelAlg.Proj (CCList.init n (fun i -> i), filtered_rhs)
 
-let compile_rules : rule list -> RelAlg.binding list = fun rs ->
+let compile_rules : rule list -> RelAlg.expr Env.t -> RelAlg.expr Env.t = fun rs env ->
   let grouped =
     CCList.group_by
       ~hash:(fun r -> Hashtbl.hash r.head.root)
@@ -325,13 +331,34 @@ let compile_rules : rule list -> RelAlg.binding list = fun rs ->
   in
   List.map
     begin fun ds ->
-    { RelAlg.var = (List.hd ds).head.root;
-      rhs =
-        let compiled = List.map compile_rule ds in
-        List.fold_left (fun r1 r2 -> RelAlg.Union (r1, r2)) (List.hd compiled) (List.tl compiled)
-    }
+      (* Where [ds] is the list of all the rules whose head is a
+         given symbol *)
+      (List.hd ds).head.root,
+      let compiled = List.map (compile_rule env) ds in
+      List.fold_left (fun r1 r2 -> RelAlg.Union (r1, r2)) (List.hd compiled) (List.tl compiled)
     end
     grouped
+    |> Env.of_list
+
+let compile_and_inflate_rules : rule list -> RelAlg.expr Env.t -> RelAlg.expr Env.t = fun rs env ->
+  Env.union (fun _ e' e -> Some (RelAlg.Union (e', e)))
+    (compile_rules rs env) env
+
+let get_derived : prog -> declaration list = fun prog ->
+  let add_ds : declaration list -> rule -> declaration list = fun acc r ->
+    r.head.root :: List.map (fun l -> l.root) r.rhs @ acc
+  in
+  prog.rules |> List.fold_left add_ds [] |> List.filter (fun d -> not (List.mem d prog.instance))
+
+let lattice_height : prog -> int = fun prog ->
+  let get_decl_height : declaration -> int = fun d ->
+    d.arity * List.length prog.atoms
+  in
+  prog |> get_derived |> List.map get_decl_height |> List.fold_left (+) 0
+
+let bottom_env : prog -> RelAlg.expr Env.t = fun prog ->
+  prog |> get_derived
+  |> List.map (fun d -> (d, RelAlg.Bottom d.arity)) |> Env.of_list
 
 (* TODOs:
 - Handle existentially quantified variables in goal. (current idea,
@@ -340,9 +367,11 @@ let compile_rules : rule list -> RelAlg.binding list = fun rs ->
  * (here number of existentially quantified variables). And use
  * similar stuff)
 - Can we factor the initial bit with compile_rule?*)
-let compile_goal : literal list -> RelAlg.formula = fun g ->
+let compile_goal : RelAlg.expr Env.t -> literal list -> RelAlg.formula = fun env g ->
   let n = 0 in
-  let pre_constr = RelAlg.(Cross (Top n, List.fold_left (fun acc l -> Cross(acc, Var (l.root))) (Top 0) g)) in
+  let pre_constr = RelAlg.(Cross (Top n, List.fold_left (fun acc l ->
+                                             Cross(acc, deref (l.root) env
+                                           )) (Top 0) g)) in
   let offsets = CCList.scan_left (fun o l -> o + l.root.arity) n g in
   let offseted = CCList.combine_shortest offsets g in
   let filtered_constr =
@@ -359,7 +388,10 @@ let compile_goal : literal list -> RelAlg.formula = fun g ->
   in
   RelAlg.ExistsSome (filtered_constr)
 
-
+let compile_prog : prog -> RelAlg.prog = fun prog ->
+  { RelAlg.instance = prog.instance;
+    constr = compile_goal (Fun.iterate (lattice_height prog) (compile_and_inflate_rules prog.rules) (bottom_env prog)) prog.goal
+  }
 
 
 (*  LocalWords:  arity datalog
