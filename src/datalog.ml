@@ -301,7 +301,7 @@ let compile_rule : rule -> RelAlg.expr = fun r ->
   let pre_rhs = RelAlg.(Cross (Top n, List.fold_left (fun acc l -> Cross(acc, Var (l.root))) (Top 0) r.rhs)) in
   let offsets = CCList.scan_left (fun o l -> o + l.root.arity) n r.rhs in
   let offseted = CCList.combine_shortest offsets r.rhs in
-  let pos x = index_of ((=) (Var x)) (r.head.arguments) in
+  let pos x = index_of (Stdlib.(=) (Var x)) (r.head.arguments) in
   let filtered_rhs =
     List.fold_left
       begin fun acc (off,l) ->
@@ -320,7 +320,7 @@ let compile_rules : rule list -> RelAlg.binding list = fun rs ->
   let grouped =
     CCList.group_by
       ~hash:(fun r -> Hashtbl.hash r.head.root)
-      ~eq:(fun r1 r2 -> r1.head.root = r2.head.root)
+      ~eq:(fun r1 r2 -> Stdlib.(r1.head.root = r2.head.root))
       rs
   in
   List.map
