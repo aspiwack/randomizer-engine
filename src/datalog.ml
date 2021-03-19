@@ -396,6 +396,44 @@ let compile_prog : prog -> RelAlg.prog = fun prog ->
     constr = compile_goal (Fun.iterate (lattice_height prog) (compile_and_inflate_rules prog.rules) (bottom_env prog)) prog.goal
   }
 
+(* This is an intermediate step, where the notion of program stays
+ * the same as pre-datalog. So that we can debug. But the spirit is
+ * that we will define more general programs where the instance
+ * relations are defined in the text. *)
+let interp_rando_program : Types.program -> prog = fun p ->
+  let open Types in
+  (* XXX: we are ignoring multiplicity *)
+  let assigned = { name = "∈"; arity = 2 } in
+  let have =  { name = "have"; arity = 1 } in
+  let reach =  { name = "reach"; arity = 1 } in
+  (* XXX: Assuming, here, that atoms and location don't share names,
+     which they actually may, I suppose. *)
+  let atoms = p.locations @ List.map fst p.pool in
+  let instance = [assigned] in
+  let interp_atom : (MultipliedItem.t, Empty.t
+                    ) Atom.t -> literal = fun a ->
+    match a with
+    | Types.Atom.Reach l -> { root = reach ; arguments = [Atom l]}
+    (* XXX: ignoring the index (for multiple copies) *)
+    | Types.Atom.Have (it, _) -> { root = have ; arguments = [Atom it]}
+    | Types.Atom.Assign (_, nothing) -> Empty.absurd nothing
+  in
+  let interp_clause = fun c ->
+    { head = interp_atom c.Clause.goal ;
+      rhs = List.map interp_atom c.requires }
+  in
+  let rules =
+    (* have: x <- x ∈ l, reach l *)
+    let have_def =
+      { head = { root = have ; arguments = [Var "x"] } ;
+        rhs = [{ root = assigned ; arguments = [Var "l"; Var "x"] };
+               { root = reach ; arguments = [Var "l"] }]
+      }
+    in
+    have_def :: List.map interp_clause p.logic
+  in
+  let goal = [interp_atom p.goal] in
+  { atoms; instance; rules; goal }
 
 (*  LocalWords:  arity datalog
  *)
