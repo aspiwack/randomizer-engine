@@ -189,12 +189,6 @@ module StringMap = Map.Make(CCString)
 
 type program = {
   locations: Location.t list;
-  (* Future plan for item: there can be more than one of an item in
-     the pool. In which case it will be translated to n variables
-     (where n is the number of occurrences of that item in the pool),
-     the corresponding range_constraints will be translated to
-     formulas which ensure that the n variables are ordered (to avoid
-     generating many semantically equal shuffles) *)
   pool: (Item.t * int) list;
   range_constraints: RangeConstraint.t list;
   range_definitions: Location.t list StringMap.t;
