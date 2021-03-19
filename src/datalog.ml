@@ -219,6 +219,7 @@ module RelAlg = struct
     match e with
     | Var r -> Env.find r env
     | Top arity -> of_iter (Iter.map (fun tuple -> (tuple, Formula.one)) (tuples atoms arity))
+    | Bottom _arity -> Rel.empty
     | Inter (r1, r2) ->
        Rel.merge_safe
          (compile_expr atoms env r1)
