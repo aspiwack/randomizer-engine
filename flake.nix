@@ -1,10 +1,15 @@
 {
   nixConfig = {
+    # Why ever must I specify the extra-substituters from
+    # tweag/topiary? They ought to be transitively imported, don't
+    # they?
     extra-substituters = [
       "https://aspiwack.cachix.org"
+      "https://tweag-topiary.cachix.org"
     ];
     extra-trusted-public-keys = [
       "aspiwack.cachix.org-1:2D/Nc4rGV10LY8O+c3HMbOJ4wtMY6w7xFubjEmexcfc="
+      "tweag-topiary.cachix.org-1:8TKqya43LAfj4qNHnljLpuBnxAY/YwEBfzo3kzXxNY0="
     ];
   };
 
@@ -12,9 +17,10 @@
     opam-nix.url = "github:tweag/opam-nix";
     flake-utils.url = "github:numtide/flake-utils";
     nixpkgs.follows = "opam-nix/nixpkgs";
+    topiary.url = "github:tweag/topiary";
   };
 
-  outputs = { self, flake-utils, opam-nix, nixpkgs }@inputs:
+  outputs = { self, flake-utils, opam-nix, nixpkgs, topiary }@inputs:
     let package = "randomizer-engine";
     in flake-utils.lib.eachDefaultSystem (system:
       let
@@ -56,6 +62,12 @@
           inputsFrom = [ main ];
           buildInputs = devPackages ++ [
             # You can add packages from nixpkgs here
+
+            # can be invoked with $ git ls-files | grep -e '\.ml\(i\)\?$' | xargs -n1 topiary -i -f
+            # Below is probably the right way to do when stable for
+            #   now let's call the flake directly.
+            # pkgs.topiary
+            topiary.packages.${system}.default
           ];
         };
       });

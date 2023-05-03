@@ -13,7 +13,7 @@ end
 
 module Empty = struct
 
-  type t = { ef : 'a. 'a}
+  type t = { ef: 'a. 'a }
 
   let absurd v = v.ef
 
@@ -22,21 +22,22 @@ module Empty = struct
   let hash v = v.ef
 
   let pp _fmt v = v.ef
-
 end
 
-module Either (L:Type) (R:Type) = struct
+module Either (L: Type) (R: Type) = struct
 
   type t =
     | Left of L.t
     | Right of R.t
 
-  let equal x y = match x,y with
+  let equal x y =
+    match x, y with
     | Left x, Left y -> L.equal x y
     | Right x, Right y -> R.equal x y
     | _ -> false
 
-  let compare x y  = match x,y with
+  let compare x y =
+    match x, y with
     | Left x, Left y -> L.compare x y
     | Left _, _ -> -1
     | _, Left _ -> 1
@@ -49,7 +50,6 @@ module Either (L:Type) (R:Type) = struct
   let pp fmt = function
     | Left x -> L.pp fmt x
     | Right x -> R.pp fmt x
-
 end
 
 module Variable = struct
@@ -74,14 +74,14 @@ module IndexedItem = struct
 
   let make item index = { item; index }
 
-  let compare {item=iteml; index=indexl} {item=itemr; index=indexr} =
+  let compare { item = iteml; index = indexl } { item = itemr; index = indexr } =
     CCOrd.(Item.compare iteml itemr <?> (CCInt.compare, indexl, indexr))
-  let equal {item=iteml; index=indexl} {item=itemr; index=indexr} =
+  let equal { item = iteml; index = indexl } { item = itemr; index = indexr } =
     Item.equal iteml itemr && CCInt.equal indexl indexr
 
-  let hash {item; index} = CCHash.(combine2 (Item.hash item) (int index))
+  let hash { item; index } = CCHash.(combine2 (Item.hash item) (int index))
 
-  let pp fmt {item; index} = Format.fprintf fmt "%a_%i" Item.pp item index
+  let pp fmt { item; index } = Format.fprintf fmt "%a_%i" Item.pp item index
 end
 
 module MultipliedItem = struct
@@ -93,11 +93,11 @@ module MultipliedItem = struct
   let compare = CCPair.compare Item.compare CCInt.compare
   let equal = CCPair.equal Item.equal CCInt.equal
 
-  let hash (item,k) = CCHash.(combine2 (Item.hash item) (int k))
+  let hash (item, k) = CCHash.(combine2 (Item.hash item) (int k))
 
   let pp fmt = function
-    | (item,1) -> Format.fprintf fmt "%a" Item.pp item
-    | (item,k) -> Format.fprintf fmt "%a * %i" Item.pp item k
+    | (item, 1) -> Format.fprintf fmt "%a" Item.pp item
+    | (item, k) -> Format.fprintf fmt "%a * %i" Item.pp item k
 end
 
 module RangeConstraint = struct
@@ -106,22 +106,22 @@ module RangeConstraint = struct
     range: Location.t list;
   }
 
-  let pp fmt {scrutinee;range} =
-  Format.fprintf fmt "%s ∈ {%a}" scrutinee (CCList.pp CCString.pp) range
-
+  let pp fmt { scrutinee; range } =
+    Format.fprintf fmt "%s ∈ {%a}" scrutinee (CCList.pp CCString.pp) range
 end
 
 module Atom = struct
 
-  type ('p,'i) t =
+  type ('p, 'i) t =
     | Reach of Location.t
     | Have of 'p (* XXX: The goal is to separate the `'i` in Have and the `'i` in Assign so that `Have` can be an item w/ multiplicity (we can drop the `int` from the constructor that way, and it will be better when we decompose in the multiplicity transformation, it will make more sense) and `Assign` can mention individualised items, because it's the only thing that would make sense. All that going into the provable transformation, which needs to be performed before the multiplicity transformation as it requires implicational clauses (including clauses involving assignment!).*)
     | Assign of Location.t * 'i
-    (* Assign doesn't come from parsing: it appears in translations.*)
+  (* Assign doesn't come from parsing: it appears in translations.*)
 
-  let compare possession_compare item_compare al ar = match al, ar with
-    | Assign(locl,iteml), Assign(locr, itemr) ->
-      CCPair.compare Location.compare item_compare (locl,iteml) (locr,itemr)
+  let compare possession_compare item_compare al ar =
+    match al, ar with
+    | Assign (locl, iteml), Assign (locr, itemr) ->
+      CCPair.compare Location.compare item_compare (locl, iteml) (locr, itemr)
     | Assign _, _ -> -1
     | _, Assign _ -> 1
     | Reach locl, Reach locr ->
@@ -130,8 +130,9 @@ module Atom = struct
     | _, Reach _ -> 1
     | Have iteml, Have itemr ->
       possession_compare iteml itemr
-  let equal possession_equal item_equal al ar = match al, ar with
-    | Assign(locl,iteml), Assign(locr, itemr) ->
+  let equal possession_equal item_equal al ar =
+    match al, ar with
+    | Assign (locl, iteml), Assign (locr, itemr) ->
       Location.equal locl locr && item_equal iteml itemr
     | Reach locl, Reach locr ->
       Location.equal locl locr
@@ -142,7 +143,7 @@ module Atom = struct
   let hash hash_possession hash_item = function
     | Reach l -> CCHash.(combine2 (int 0) (Location.hash l))
     | Have i -> CCHash.(combine2 (int 1) (hash_possession i))
-    | Assign (l,i) -> CCHash.(combine3 (int 2) (Location.hash l) (hash_item i))
+    | Assign (l, i) -> CCHash.(combine3 (int 2) (Location.hash l) (hash_item i))
 
   let map f_possession f_item = function
     | Reach l -> Reach l
@@ -152,9 +153,9 @@ module Atom = struct
   let pp pp_possession pp_item fmt = function
     | Reach l -> Format.fprintf fmt "reach: %a" Location.pp l
     | Have i -> Format.fprintf fmt "have: %a" pp_possession i
-    | Assign(l,i) -> Format.fprintf fmt "%a ∈ %a" pp_item i Location.pp l
+    | Assign (l, i) -> Format.fprintf fmt "%a ∈ %a" pp_item i Location.pp l
 
-  module Make(P:Type)(I:Type) = struct
+  module Make (P: Type) (I: Type) = struct
 
     module Core = struct
       type nonrec t = (P.t, I.t) t
@@ -171,7 +172,6 @@ module Atom = struct
     module Set = Set.Make(Core)
     module Map = Map.Make(Core)
   end
-
 end
 
 module Clause = struct
@@ -180,7 +180,6 @@ module Clause = struct
     goal: (MultipliedItem.t, Empty.t) Atom.t;
     requires: (MultipliedItem.t, Empty.t) Atom.t list
   }
-
 end
 
 module StringMap = Map.Make(CCString)
@@ -196,16 +195,18 @@ type program = {
   goal: (MultipliedItem.t, Empty.t) Atom.t
 }
 
-let pp_clause fmt {Clause.goal;requires} =
-  Format.fprintf fmt "%a :- @[<hov>%a@]"
+let pp_clause fmt { Clause.goal; requires } =
+  Format.fprintf
+    fmt
+    "%a :- @[<hov>%a@]"
     (Atom.pp MultipliedItem.pp Empty.pp)
     goal
-    (CCList.pp ~pp_sep:CCFormat.(const string ",") (Atom.pp MultipliedItem.pp Empty.pp))
+    (CCList.pp ~pp_sep: CCFormat.(const string ",") (Atom.pp MultipliedItem.pp Empty.pp))
     requires
 let pp_program fmt prog =
   (* XXX: I'm not printing range_definitions *)
   let pp_locations = CCList.pp (fun fmt l -> Format.fprintf fmt "@[<h>%s@]" l) in
-  let pp_pool = CCList.pp (fun fmt (i,n) -> Format.fprintf fmt "@[<h>%s*%i@]" i n) in
+  let pp_pool = CCList.pp (fun fmt (i, n) -> Format.fprintf fmt "@[<h>%s*%i@]" i n) in
   let pp_ranges = CCList.pp RangeConstraint.pp in
   let pp_logic = CCList.pp pp_clause in
   let pp_goal fmt g = Format.fprintf fmt "%a." (Atom.pp MultipliedItem.pp Empty.pp) g in

@@ -1,4 +1,3 @@
-
 let whitespace = [%sedlex.regexp? white_space]
 let simple_ident = [%sedlex.regexp? Plus alphabetic]
 let string_quote = [%sedlex.regexp? '"']
@@ -30,7 +29,8 @@ and make_ident lexbuf =
   let acc = Buffer.create 42 in
   let rec read_string lexbuf =
     let open Sedlexing in
-    [%sedlex match lexbuf with
+    [%sedlex
+      match lexbuf with
       | string_quote -> Buffer.contents acc
       | Compl string_quote -> accumulate (Utf8.lexeme lexbuf) lexbuf
       | _ -> assert false

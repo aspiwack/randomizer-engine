@@ -68,7 +68,7 @@ type name = String.t
 type var = String.t
 type atom = String.t
 type declaration = { name: name; arity: int }
-module Env = Map.Make (struct type t = declaration let compare = Stdlib.compare end)
+module Env = Map.Make(struct type t = declaration let compare = Stdlib.compare end)
 
 type arg =
   | Var of var
@@ -76,18 +76,18 @@ type arg =
 type literal = { root: declaration; arguments: arg list }
 
 type rule = {
-    head: literal;
-    rhs: literal list;
-  }
+  head: literal;
+  rhs: literal list;
+}
 
 type goal = literal list
 
 type prog = {
-    atoms : atom list;
-    instance: declaration list;
-    rules: rule list;
-    goal: goal;
-  }
+  atoms: atom list;
+  instance: declaration list;
+  rules: rule list;
+  goal: goal;
+}
 
 module RelAlg = struct
   (* A relation program is
@@ -111,8 +111,7 @@ module RelAlg = struct
     | Proj of int list * expr (* all indices in range *)
 
   type formula =
-    | ExistsSome of expr  (* the relation is non-empty *)
-
+    | ExistsSome of expr (* the relation is non-empty *)
 
   type binding = {
     var: declaration;
@@ -120,9 +119,9 @@ module RelAlg = struct
   }
 
   type prog = {
-      atoms: atom list;
-      instance: declaration list;
-      constr: formula;
+    atoms: atom list;
+    instance: declaration list;
+    constr: formula;
   }
 
   module Rel = Map.Make(struct type t = atom list let compare = Stdlib.compare end)
@@ -157,28 +156,32 @@ module RelAlg = struct
   type env = rel Env.t
 
   let rec tuples : atom list -> int -> atom list Iter.t = fun atoms arity ->
-    if arity <= 0 then Iter.singleton []
-    else
-      let open Iter in
-      tuples atoms (arity-1) >>= fun tuple ->
-      List.to_iter atoms >>= fun a ->
-      return (a :: tuple)
+      if arity <= 0 then Iter.singleton []
+      else
+        let open Iter in
+        tuples atoms (arity - 1)
+        >>= fun tuple ->
+          List.to_iter atoms
+          >>= fun a ->
+            return (a :: tuple)
 
   (* XXX: should really be in the `Rel` module (and the current `Rel`
   module shouldn't actually be named that, or exposed for that matter)*)
   let of_iter : (atom list * satvar Formula.t) Iter.t -> rel = fun pairs ->
-    let not_false = function (_, Formula.Zero) -> false | _ -> true in
-    let combine : satvar Formula.t -> satvar Formula.t option -> satvar Formula.t option
-      = fun f -> function
-      | None -> Some f
-      | Some f' -> Some Formula.( f' || f )
-    in
-    let of_iter_disj kvs =
-      let m = ref Rel.empty in
-      kvs (fun (k, v) -> m := Rel.update k (combine v) !m);
-      !m
-    in
-    of_iter_disj (Iter.filter not_false pairs)
+      let not_false = function (_, Formula.Zero) -> false | _ -> true in
+      let combine
+          : satvar Formula.t -> satvar Formula.t option -> satvar Formula.t option
+        = fun f ->
+          function
+          | None -> Some f
+          | Some f' -> Some Formula.(f' || f)
+      in
+      let of_iter_disj kvs =
+        let m = ref Rel.empty in
+        kvs (fun (k, v) -> m := Rel.update k (combine v) !m);
+        !m
+      in
+      of_iter_disj (Iter.filter not_false pairs)
 
   (* TODO: Right now, the instance relations are fully unconstrained,
      so they are basically a full matrix together with a boolean value
@@ -197,13 +200,14 @@ module RelAlg = struct
     in
     fun atoms decls ->
       let init_decl : declaration -> declaration * rel = fun decl ->
-        let new_rel =
-          of_iter begin
-              tuples atoms (decl.arity)
-              |> Iter.map (fun tuple -> (tuple, Formula.Var (new_var ())))
-            end
-        in
-        (decl, new_rel)
+          let new_rel =
+            of_iter
+              begin
+                tuples atoms (decl.arity)
+                |> Iter.map (fun tuple -> (tuple, Formula.Var (new_var ())))
+              end
+          in
+          (decl, new_rel)
       in
       decls
       |> List.to_iter
@@ -217,62 +221,71 @@ module RelAlg = struct
     them. *)
 
   let rec compile_expr : atom list -> env -> expr -> rel = fun atoms env e ->
-    match e with
-    | Var r -> Env.find r env
-    | Top arity -> of_iter (Iter.map (fun tuple -> (tuple, Formula.one)) (tuples atoms arity))
-    | Bottom _arity -> Rel.empty
-    | Inter (r1, r2) ->
-       Rel.merge_safe
-         (compile_expr atoms env r1)
-         (compile_expr atoms env r2)
-         ~f:begin fun _ -> function
+      match e with
+      | Var r -> Env.find r env
+      | Top arity -> of_iter (Iter.map (fun tuple -> (tuple, Formula.one)) (tuples atoms arity))
+      | Bottom _arity -> Rel.empty
+      | Inter (r1, r2) ->
+        Rel.merge_safe
+          (compile_expr atoms env r1)
+          (compile_expr atoms env r2)
+          ~f: begin
+            fun _ ->
+              function
               | `Left _ | `Right _ -> None
-              | `Both (f1,f2) -> Some Formula.( f1 && f2 )
-                                      (* XXX: this could be zero*)
-         end
-    | Union (r1, r2) ->
-       Rel.merge_safe
-         (compile_expr atoms env r1)
-         (compile_expr atoms env r2)
-         ~f:begin fun _ -> function
+              | `Both (f1, f2) -> Some Formula.(f1 && f2)
+            (* XXX: this could be zero*)
+          end
+      | Union (r1, r2) ->
+        Rel.merge_safe
+          (compile_expr atoms env r1)
+          (compile_expr atoms env r2)
+          ~f: begin
+            fun _ ->
+              function
               | `Left f1 -> Some f1
               | `Right f2 -> Some f2
-              | `Both (f1,f2) -> Some Formula.( f1 || f2 )
-         end
-    | Cross (r1, r2) ->
-       of_iter begin
-           let open Iter in
-           (compile_expr atoms env r1 |> Rel.to_iter) >>= fun (tuple1, f1) ->
-           (compile_expr atoms env r2 |> Rel.to_iter) >>= fun (tuple2, f2) ->
-           return (tuple1 @ tuple2, Formula.( f1 && f2 ))
-         end
-    | Same (i1, i2, r) ->
-       of_iter begin
-           Iter.filter
-             (fun (tuple, _) -> String.equal (List.nth tuple i1) (List.nth tuple i2))
-             (compile_expr atoms env r |> Rel.to_iter)
-         end
-    | EqAtom (i, a, r) ->
-       of_iter begin
-           Iter.filter
-             (fun (tuple, _) -> String.equal (List.nth tuple i) a)
-             (compile_expr atoms env r |> Rel.to_iter)
-         end
-    | Proj (is, r) ->
-       of_iter begin
-           compile_expr atoms env r
-           |> Rel.to_iter
-           |> Iter.map (fun (tuple, f) -> (List.map (List.nth tuple) is, f))
+              | `Both (f1, f2) -> Some Formula.(f1 || f2)
+          end
+      | Cross (r1, r2) ->
+        of_iter
+          begin
+            let open Iter in
+            (compile_expr atoms env r1 |> Rel.to_iter)
+            >>= fun (tuple1, f1) ->
+              (compile_expr atoms env r2 |> Rel.to_iter)
+              >>= fun (tuple2, f2) ->
+                return (tuple1 @ tuple2, Formula.(f1 && f2))
+          end
+      | Same (i1, i2, r) ->
+        of_iter
+          begin
+            Iter.filter
+              (fun (tuple, _) -> String.equal (List.nth tuple i1) (List.nth tuple i2))
+              (compile_expr atoms env r |> Rel.to_iter)
+          end
+      | EqAtom (i, a, r) ->
+        of_iter
+          begin
+            Iter.filter
+              (fun (tuple, _) -> String.equal (List.nth tuple i) a)
+              (compile_expr atoms env r |> Rel.to_iter)
+          end
+      | Proj (is, r) ->
+        of_iter
+          begin
+            compile_expr atoms env r
+            |> Rel.to_iter
+            |> Iter.map (fun (tuple, f) -> (List.map (List.nth tuple) is, f))
           end
 
   let compile_formula : atom list -> env -> formula -> satvar Formula.t = fun atoms env f ->
-     match f with
-     | ExistsSome r ->
+      match f with
+      | ExistsSome r ->
         compile_expr atoms env r
         |> Rel.to_iter
         |> Iter.map snd
-        |> Iter.fold Formula.(||) Formula.Zero
-
+        |> Iter.fold Formula.( || ) Formula.Zero
 end
 
 (* We want to
@@ -282,85 +295,104 @@ end
 
 (* TODO: move *)
 let rec index_of : ('a -> bool) -> 'a list -> int = fun p l ->
-  match l with
-  | [] -> assert false
-  | x::l -> if p x then 0 else 1 + index_of p l
-
+    match l with
+    | [] -> assert false
+    | x :: l -> if p x then 0 else 1 + index_of p l
 
 let rule_arity : rule -> int = fun r ->
-  r.head.root.arity
+    r.head.root.arity
 
 let deref : declaration -> RelAlg.expr Env.t -> RelAlg.expr = fun d env ->
-  (* Assumption: either a relation is an instance relation, or, it's
+    (* Assumption: either a relation is an instance relation, or, it's
      defined in the environment *)
-  Env.get_or d env ~default:(Var d)
+    Env.get_or d env ~default: (Var d)
 
 (* TODOs:
 - Handle the case where there are atoms in the head of the rule
 - Handle recursion *)
 let compile_rule : RelAlg.expr Env.t -> rule -> RelAlg.expr = fun env r ->
-  (* A rule looks like this R(x, y) :- S(y), T(x, a)
+    (* A rule looks like this R(x, y) :- S(y), T(x, a)
    * - We first transform it to Top/2 × S × T
    * - Then apply Same/EqAtom corresponding to the variable/atom
    *   arguments of S and T.
    * - Finally, we project on the first two columns *)
-  let n = rule_arity r in
-  let pre_rhs = RelAlg.(Cross (Top n, List.fold_left (fun acc l ->
-                                          Cross(acc, deref (l.root) env)) (Top 0) r.rhs)) in
-  let offsets = CCList.scan_left (fun o l -> o + l.root.arity) n r.rhs in
-  let offseted = CCList.combine_shortest offsets r.rhs in
-  let pos x = index_of (Stdlib.(=) (Var x)) (r.head.arguments) in
-  let filtered_rhs =
-    List.fold_left
-      begin fun acc (off,l) ->
-        CCList.foldi begin fun inner i arg ->
-          match arg with
-          | Var x -> RelAlg.Same (off+i, pos x, inner)
-          | Atom a -> RelAlg.EqAtom (off+i, a, inner)
-        end
-        acc l.arguments
-      end
-      pre_rhs offseted
+    let n = rule_arity r in
+    let pre_rhs =
+      RelAlg.(Cross
+        (
+          Top n,
+          List.fold_left
+            (
+              fun acc l ->
+                Cross (acc, deref (l.root) env)
+            )
+            (Top 0)
+            r.rhs
+        ))
     in
-  RelAlg.Proj (CCList.init n (fun i -> i), filtered_rhs)
+    let offsets = CCList.scan_left (fun o l -> o + l.root.arity) n r.rhs in
+    let offseted = CCList.combine_shortest offsets r.rhs in
+    let pos x = index_of (Stdlib.( = ) (Var x)) (r.head.arguments) in
+    let filtered_rhs =
+      List.fold_left
+        begin
+          fun acc (off, l) ->
+            CCList.foldi
+              begin
+                fun inner i arg ->
+                  match arg with
+                  | Var x -> RelAlg.Same (off + i, pos x, inner)
+                  | Atom a -> RelAlg.EqAtom (off + i, a, inner)
+              end
+              acc
+              l.arguments
+        end
+        pre_rhs
+        offseted
+    in
+    RelAlg.Proj (CCList.init n (fun i -> i), filtered_rhs)
 
 let compile_rules : rule list -> RelAlg.expr Env.t -> RelAlg.expr Env.t = fun rs env ->
-  let grouped =
-    CCList.group_by
-      ~hash:(fun r -> Hashtbl.hash r.head.root)
-      ~eq:(fun r1 r2 -> Stdlib.(r1.head.root = r2.head.root))
-      rs
-  in
-  List.map
-    begin fun ds ->
-      (* Where [ds] is the list of all the rules whose head is a
+    let grouped =
+      CCList.group_by
+        ~hash: (fun r -> Hashtbl.hash r.head.root)
+        ~eq: (fun r1 r2 -> Stdlib.(r1.head.root = r2.head.root))
+        rs
+    in
+    List.map
+      begin
+        fun ds ->
+          (* Where [ds] is the list of all the rules whose head is a
          given symbol *)
-      (List.hd ds).head.root,
-      let compiled = List.map (compile_rule env) ds in
-      List.fold_left (fun r1 r2 -> RelAlg.Union (r1, r2)) (List.hd compiled) (List.tl compiled)
-    end
-    grouped
+          (List.hd ds).head.root,
+          let compiled = List.map (compile_rule env) ds in
+          List.fold_left (fun r1 r2 -> RelAlg.Union (r1, r2)) (List.hd compiled) (List.tl compiled)
+      end
+      grouped
     |> Env.of_list
 
 let compile_and_inflate_rules : rule list -> RelAlg.expr Env.t -> RelAlg.expr Env.t = fun rs env ->
-  Env.union (fun _ e' e -> Some (RelAlg.Union (e', e)))
-    (compile_rules rs env) env
+    Env.union
+      (fun _ e' e -> Some (RelAlg.Union (e', e)))
+      (compile_rules rs env)
+      env
 
 let get_derived : prog -> declaration list = fun prog ->
-  let add_ds : declaration list -> rule -> declaration list = fun acc r ->
-    r.head.root :: List.map (fun l -> l.root) r.rhs @ acc
-  in
-  prog.rules |> List.fold_left add_ds [] |> List.filter (fun d -> not (List.mem d prog.instance))
+    let add_ds : declaration list -> rule -> declaration list = fun acc r ->
+        r.head.root :: List.map (fun l -> l.root) r.rhs @ acc
+    in
+    prog.rules |> List.fold_left add_ds [] |> List.filter (fun d -> not (List.mem d prog.instance))
 
 let lattice_height : prog -> int = fun prog ->
-  let get_decl_height : declaration -> int = fun d ->
-    Int.pow (List.length prog.atoms) d.arity
-  in
-  prog |> get_derived |> List.map get_decl_height |> List.fold_left (+) 0
+    let get_decl_height : declaration -> int = fun d ->
+        Int.pow (List.length prog.atoms) d.arity
+    in
+    prog |> get_derived |> List.map get_decl_height |> List.fold_left ( + ) 0
 
 let bottom_env : prog -> RelAlg.expr Env.t = fun prog ->
-  prog |> get_derived
-  |> List.map (fun d -> (d, RelAlg.Bottom d.arity)) |> Env.of_list
+    prog |> get_derived
+    |> List.map (fun d -> (d, RelAlg.Bottom d.arity))
+    |> Env.of_list
 
 (* TODOs:
 - Handle existentially quantified variables in goal. (current idea,
@@ -370,70 +402,96 @@ let bottom_env : prog -> RelAlg.expr Env.t = fun prog ->
  * similar stuff)
 - Can we factor the initial bit with compile_rule?*)
 let compile_goal : RelAlg.expr Env.t -> literal list -> RelAlg.formula = fun env g ->
-  let n = 0 in
-  let pre_constr = RelAlg.(Cross (Top n, List.fold_left (fun acc l ->
-                                             Cross(acc, deref (l.root) env
-                                           )) (Top 0) g)) in
-  let offsets = CCList.scan_left (fun o l -> o + l.root.arity) n g in
-  let offseted = CCList.combine_shortest offsets g in
-  let filtered_constr =
-    List.fold_left
-      begin fun acc (off,l) ->
-        CCList.foldi begin fun inner i arg ->
-          match arg with
-          | Var _x -> assert false
-          | Atom a -> RelAlg.EqAtom (off+i, a, inner)
+    let n = 0 in
+    let pre_constr =
+      RelAlg.(Cross
+        (
+          Top n,
+          List.fold_left
+            (
+              fun acc l ->
+                Cross
+                  (
+                    acc, deref (l.root) env
+                  )
+            )
+            (Top 0)
+            g
+        ))
+    in
+    let offsets = CCList.scan_left (fun o l -> o + l.root.arity) n g in
+    let offseted = CCList.combine_shortest offsets g in
+    let filtered_constr =
+      List.fold_left
+        begin
+          fun acc (off, l) ->
+            CCList.foldi
+              begin
+                fun inner i arg ->
+                  match arg with
+                  | Var _x -> assert false
+                  | Atom a -> RelAlg.EqAtom (off + i, a, inner)
+              end
+              acc
+              l.arguments
         end
-        acc l.arguments
-      end
-      pre_constr offseted
-  in
-  RelAlg.ExistsSome (filtered_constr)
+        pre_constr
+        offseted
+    in
+    RelAlg.ExistsSome (filtered_constr)
 
 let compile_prog : prog -> RelAlg.prog = fun prog ->
-  { RelAlg.instance = prog.instance;
-    atoms = prog.atoms;
-    constr = compile_goal (Fun.iterate (lattice_height prog) (compile_and_inflate_rules prog.rules) (bottom_env prog)) prog.goal
-  }
+    {
+      RelAlg.instance = prog.instance;
+      atoms = prog.atoms;
+      constr = compile_goal (Fun.iterate (lattice_height prog) (compile_and_inflate_rules prog.rules) (bottom_env prog)) prog.goal
+    }
 
 (* This is an intermediate step, where the notion of program stays
  * the same as pre-datalog. So that we can debug. But the spirit is
  * that we will define more general programs where the instance
  * relations are defined in the text. *)
 let interp_rando_program : Types.program -> prog = fun p ->
-  let open Types in
-  (* XXX: we are ignoring multiplicity *)
-  let assigned = { name = "∈"; arity = 2 } in
-  let have =  { name = "have"; arity = 1 } in
-  let reach =  { name = "reach"; arity = 1 } in
-  (* XXX: Assuming, here, that atoms and location don't share names,
+    let open Types in
+    (* XXX: we are ignoring multiplicity *)
+    let assigned = { name = "∈"; arity = 2 } in
+    let have = { name = "have"; arity = 1 } in
+    let reach = { name = "reach"; arity = 1 } in
+    (* XXX: Assuming, here, that atoms and location don't share names,
      which they actually may, I suppose. *)
-  let atoms = p.locations @ List.map fst p.pool in
-  let instance = [assigned] in
-  let interp_atom : (MultipliedItem.t, Empty.t
-                    ) Atom.t -> literal = fun a ->
-    match a with
-    | Types.Atom.Reach l -> { root = reach ; arguments = [Atom l]}
-    (* XXX: ignoring the index (for multiple copies) *)
-    | Types.Atom.Have (it, _) -> { root = have ; arguments = [Atom it]}
-    | Types.Atom.Assign (_, nothing) -> Empty.absurd nothing
-  in
-  let interp_clause = fun c ->
-    { head = interp_atom c.Clause.goal ;
-      rhs = List.map interp_atom c.requires }
-  in
-  let rules =
-    (* have: x <- x ∈ l, reach l *)
-    let have_def =
-      { head = { root = have ; arguments = [Var "x"] } ;
-        rhs = [{ root = assigned ; arguments = [Var "l"; Var "x"] };
-               { root = reach ; arguments = [Var "l"] }]
-      }
+    let atoms = p.locations @ List.map fst p.pool in
+    let instance = [assigned] in
+    let interp_atom
+        : (MultipliedItem.t, Empty.t) Atom.t ->
+        literal
+      = fun a ->
+        match a with
+        | Types.Atom.Reach l -> { root = reach; arguments = [Atom l] }
+        (* XXX: ignoring the index (for multiple copies) *)
+        | Types.Atom.Have (it, _) -> { root = have; arguments = [Atom it] }
+        | Types.Atom.Assign (_, nothing) -> Empty.absurd nothing
     in
-    have_def :: List.map interp_clause p.logic
-  in
-  let goal = [interp_atom p.goal] in
-  { atoms; instance; rules; goal }
+    let interp_clause = fun c ->
+        {
+          head = interp_atom c.Clause.goal;
+          rhs = List.map interp_atom c.requires
+        }
+    in
+    let rules =
+      (* have: x <- x ∈ l, reach l *)
+      let have_def =
+        {
+          head = { root = have; arguments = [Var "x"] };
+          rhs = [
+            { root = assigned; arguments = [Var "l"; Var "x"] };
+            { root = reach; arguments = [Var "l"] }
+          ]
+        }
+      in
+      have_def :: List.map interp_clause p.logic
+    in
+    let goal = [interp_atom p.goal] in
+    { atoms; instance; rules; goal }
 
 (*  LocalWords:  arity datalog
  *)
