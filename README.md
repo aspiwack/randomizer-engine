@@ -11,8 +11,9 @@ project are Simon Cruanes's (@c-cube).
 ## What is it?
 
 Randomisers are a recent popular trend in video game. The modern trend
-and form has been started by [Zelda: A Link to the Past
-Randomizer][alttpr].
+and form has been started, as far as I know, by [Super Metroid's
+randomizer][smr], though the most popular is probably [Zelda: A Link
+to the Past Randomizer][alttpr].
 
 The principle is the following: a game has a number of items to find
 in order to complete the game. These items are shuffled around before
@@ -96,5 +97,19 @@ pool (such as the fact that, in _a link to the past randomizer_, there are
 more occurrences of the sword in “easy” mode, as well as an extra
 “Quarter magic” item)
 
+### Datalog
+
+My current line of thought generalises on the above by using a
+datalog-like frontend. It makes it possible to express more
+complexity, and provides some degree of abstraction.
+
+### Approximate model counting/sampling
+
+Exact counting and sampling is prohibitively expensive. There are
+simply too many models. Fortunately there are processes to count or
+sample with good precision which are much more efficient. So it's
+probably the right way to go.
+
 [alttpr]: https://alttpr.com/
+[smr]: https://randommetroidsolver.pythonanywhere.com/
 [zdd-wiki]: https://en.wikipedia.org/wiki/Zero-suppressed_decision_diagram
