@@ -18,6 +18,7 @@ Steps:
 *)
 
 open Datalog
+open Modelotron
 
 open Types
 let ( &&& ) = MLBDD.dand
