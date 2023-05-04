@@ -20,14 +20,13 @@ Steps:
 open Datalog
 
 open Types
-let (&&&) = MLBDD.dand
-let (|||) = MLBDD.dor
+let ( &&& ) = MLBDD.dand
+let ( ||| ) = MLBDD.dor
 let anot = MLBDD.dnot
-let (-->) = MLBDD.imply
+let ( --> ) = MLBDD.imply
 
 module MultipliedOrIndexed = Either(MultipliedItem)(IndexedItem)
 type formula = (MultipliedOrIndexed.t, IndexedItem.t) Atom.t Provable.timed Formula.t
-
 
 module IndexedAssignmentAtom = Atom.Make(MultipliedOrIndexed)(IndexedItem)
 module TimedAtom = Provable.MakeTimed(IndexedAssignmentAtom)
@@ -40,10 +39,9 @@ module TimedLiteralMap = Map.Make(TimedLiteral)
 module type CompileArg = sig
 
   val the_program : program
-
 end
 
-module Compile (P : CompileArg) = struct
+module Compile (P: CompileArg) = struct
 
   module Phase = Phases.Make(P)
 
@@ -58,8 +56,8 @@ module Compile (P : CompileArg) = struct
     *> (compileMult ** indexObservables)
 
   let invert_array (arr : Phase.Mult.L.t array) : int Phase.Mult.L.Map.t =
-    Array.to_seqi arr |>
-    Seq.fold_left (fun acc (i,a) -> Phase.Mult.L.Map.add a i acc) Phase.Mult.L.Map.empty
+    Array.to_seqi arr
+    |> Seq.fold_left (fun acc (i, a) -> Phase.Mult.L.Map.add a i acc) Phase.Mult.L.Map.empty
 
   let compile_formula man var_index (f : Phase.Mult.L.t Formula.t) : MLBDD.t =
     let mk_var (l : Phase.Mult.L.t) : MLBDD.t =
@@ -67,14 +65,16 @@ module Compile (P : CompileArg) = struct
       | (a, Msat.Negated) -> MLBDD.dnot @@ MLBDD.ithvar man (Phase.Mult.L.Map.find a var_index)
       | (a, Msat.Same_sign) -> MLBDD.ithvar man (Phase.Mult.L.Map.find a var_index)
     in
-    let rec compile = let open Formula in function
-        | Zero -> MLBDD.dfalse man
-        | One -> MLBDD.dtrue man
-        | Var l -> mk_var l
-        | And (x,y) -> compile x &&& compile y
-        | Or (x,y) -> compile x ||| compile y
-        | Impl (x,y) -> MLBDD.imply (compile x) (compile y)
-        | Not x -> anot (compile x)
+    let rec compile =
+      let open Formula in
+      function
+      | Zero -> MLBDD.dfalse man
+      | One -> MLBDD.dtrue man
+      | Var l -> mk_var l
+      | And (x, y) -> compile x &&& compile y
+      | Or (x, y) -> compile x ||| compile y
+      | Impl (x, y) -> MLBDD.imply (compile x) (compile y)
+      | Not x -> anot (compile x)
     in
     compile f
 
@@ -88,8 +88,8 @@ module Compile (P : CompileArg) = struct
     let _ = Solver.assume_clauses solver (List.to_seq clauses) in
     Solver.successive_formulas solver observable
     |> Seq.map (compile_formula man var_index)
-    |> OSeq.fold (|||) (MLBDD.dfalse man)
-  , observable
+    |> OSeq.fold ( ||| ) (MLBDD.dfalse man),
+    observable
 
   let femto_example =
     let open Clause in
@@ -100,17 +100,21 @@ module Compile (P : CompileArg) = struct
     and well = "Karakiko Well"
     and eastern_boss = "Eastern Boss"
     in
-    let pool = List.map (fun i -> (i,1)) [sword] in
+    let pool = List.map (fun i -> (i, 1)) [sword] in
     let locations = [well; eastern_boss; ] in
     let goal = Atom.Reach eastern_boss in
-    let range_constraints = [
-      {RangeConstraint.scrutinee=sword; range=locations};
-    ] in
-    let logic = [
-      {goal=Reach eastern_boss; requires=[Have (sword, 1)]};
-      {goal=Reach well; requires=[]};
-    ] in
-    { locations; pool; range_constraints; range_definitions=StringMap.empty; logic; goal }
+    let range_constraints =
+      [
+        { RangeConstraint.scrutinee = sword; range = locations };
+      ]
+    in
+    let logic =
+      [
+        { goal = Reach eastern_boss; requires = [Have (sword, 1)] };
+        { goal = Reach well; requires = [] };
+      ]
+    in
+    { locations; pool; range_constraints; range_definitions = StringMap.empty; logic; goal }
 
   let micro_example =
     let open Clause in
@@ -124,20 +128,24 @@ module Compile (P : CompileArg) = struct
     and eastern_chest = "Eastern Small Chest"
     and eastern_boss = "Eastern Boss"
     in
-    let pool = List.map (fun i -> (i,1)) [sword; bow] in
+    let pool = List.map (fun i -> (i, 1)) [sword; bow] in
     let locations = [well; hideout; eastern_chest; eastern_boss; ] in
     let goal = Atom.Reach eastern_boss in
-    let range_constraints = [
-      {RangeConstraint.scrutinee=sword; range=locations};
-      {RangeConstraint.scrutinee=bow; range=locations};
-    ] in
-    let logic = [
-      {goal=Reach eastern_boss; requires=[Have (bow, 1); Have (sword, 1)]};
-      {goal=Reach well; requires=[]};
-      {goal=Reach hideout; requires=[]};
-      {goal=Reach eastern_chest; requires=[]};
-    ] in
-    { locations; pool; range_constraints; range_definitions=StringMap.empty; logic; goal }
+    let range_constraints =
+      [
+        { RangeConstraint.scrutinee = sword; range = locations };
+        { RangeConstraint.scrutinee = bow; range = locations };
+      ]
+    in
+    let logic =
+      [
+        { goal = Reach eastern_boss; requires = [Have (bow, 1); Have (sword, 1)] };
+        { goal = Reach well; requires = [] };
+        { goal = Reach hideout; requires = [] };
+        { goal = Reach eastern_chest; requires = [] };
+      ]
+    in
+    { locations; pool; range_constraints; range_definitions = StringMap.empty; logic; goal }
 
   let mini_example =
     let open Clause in
@@ -153,23 +161,27 @@ module Compile (P : CompileArg) = struct
     and eastern_big_chest = "Easter Big Chest"
     and eastern_boss = "Eastern Boss"
     in
-    let pool = List.map (fun i -> (i,1)) [sword; bow; eastern_big] in
+    let pool = List.map (fun i -> (i, 1)) [sword; bow; eastern_big] in
     let locations = [well; hideout; eastern_chest; eastern_big_chest; eastern_boss; ] in
     let eastern_palace = [eastern_chest; eastern_big_chest; eastern_boss] in
     let goal = Atom.Reach eastern_boss in
-    let range_constraints = [
-      {RangeConstraint.scrutinee=sword; range=locations};
-      {RangeConstraint.scrutinee=bow; range=locations};
-      {RangeConstraint.scrutinee=eastern_big; range=eastern_palace};
-    ] in
-    let logic = [
-      {goal=Reach eastern_boss; requires=[Have (bow, 1); Have (sword, 1); Have (eastern_big, 1)]};
-      {goal=Reach well; requires=[]};
-      {goal=Reach hideout; requires=[]};
-      {goal=Reach eastern_chest; requires=[Have (eastern_big, 1)]};
-      {goal=Reach eastern_big_chest; requires=[]};
-    ] in
-    { locations; pool; range_constraints; range_definitions=StringMap.empty; logic; goal }
+    let range_constraints =
+      [
+        { RangeConstraint.scrutinee = sword; range = locations };
+        { RangeConstraint.scrutinee = bow; range = locations };
+        { RangeConstraint.scrutinee = eastern_big; range = eastern_palace };
+      ]
+    in
+    let logic =
+      [
+        { goal = Reach eastern_boss; requires = [Have (bow, 1); Have (sword, 1); Have (eastern_big, 1)] };
+        { goal = Reach well; requires = [] };
+        { goal = Reach hideout; requires = [] };
+        { goal = Reach eastern_chest; requires = [Have (eastern_big, 1)] };
+        { goal = Reach eastern_big_chest; requires = [] };
+      ]
+    in
+    { locations; pool; range_constraints; range_definitions = StringMap.empty; logic; goal }
 
   let example =
     let open Clause in
@@ -191,30 +203,34 @@ module Compile (P : CompileArg) = struct
     and desert_big_chest = "Desert Big Chest"
     and desert_boss = "Desert Boss"
     in
-    let pool = List.map (fun i -> (i,1)) [sword; bow; boots; glove; eastern_big; desert_big] in
+    let pool = List.map (fun i -> (i, 1)) [sword; bow; boots; glove; eastern_big; desert_big] in
     let locations = [well; hideout; eastern_chest; eastern_big_chest; eastern_boss; desert_torch; desert_big_chest; desert_boss] in
     let eastern_palace = [eastern_chest; eastern_big_chest; eastern_boss] in
     let desert_palace = [desert_torch; desert_big_chest; desert_boss] in
     let goal = Atom.Reach desert_boss in
-    let range_constraints = [
-      {RangeConstraint.scrutinee=sword; range=locations};
-      {RangeConstraint.scrutinee=bow; range=locations};
-      {RangeConstraint.scrutinee=boots; range=locations};
-      {RangeConstraint.scrutinee=glove; range=locations};
-      {RangeConstraint.scrutinee=eastern_big; range=eastern_palace};
-      {RangeConstraint.scrutinee=desert_big; range=desert_palace};
-    ] in
-    let logic = [
-      {goal=Reach eastern_boss; requires=[Have (bow, 1); Have (sword, 1); Have (eastern_big, 1)]};
-      {goal=Reach desert_boss; requires=[Have (glove, 1); Have (sword, 1); Have (eastern_big, 1)]};
-      {goal=Reach desert_torch; requires=[Have (boots, 1)]};
-      {goal=Reach well; requires=[]};
-      {goal=Reach hideout; requires=[]};
-      {goal=Reach eastern_chest; requires=[]};
-      {goal=Reach eastern_big_chest; requires=[Have (eastern_big, 1)]};
-      {goal=Reach desert_big_chest; requires=[Have (desert_big, 1)]};
-    ] in
-    { locations; pool; range_constraints; range_definitions=StringMap.empty; logic; goal }
+    let range_constraints =
+      [
+        { RangeConstraint.scrutinee = sword; range = locations };
+        { RangeConstraint.scrutinee = bow; range = locations };
+        { RangeConstraint.scrutinee = boots; range = locations };
+        { RangeConstraint.scrutinee = glove; range = locations };
+        { RangeConstraint.scrutinee = eastern_big; range = eastern_palace };
+        { RangeConstraint.scrutinee = desert_big; range = desert_palace };
+      ]
+    in
+    let logic =
+      [
+        { goal = Reach eastern_boss; requires = [Have (bow, 1); Have (sword, 1); Have (eastern_big, 1)] };
+        { goal = Reach desert_boss; requires = [Have (glove, 1); Have (sword, 1); Have (eastern_big, 1)] };
+        { goal = Reach desert_torch; requires = [Have (boots, 1)] };
+        { goal = Reach well; requires = [] };
+        { goal = Reach hideout; requires = [] };
+        { goal = Reach eastern_chest; requires = [] };
+        { goal = Reach eastern_big_chest; requires = [Have (eastern_big, 1)] };
+        { goal = Reach desert_big_chest; requires = [Have (desert_big, 1)] };
+      ]
+    in
+    { locations; pool; range_constraints; range_definitions = StringMap.empty; logic; goal }
 
   let print_to_dot legend b ~file =
     (* Adapted from Jean-Christophe Filliâtre's bdd library*)
@@ -225,25 +241,26 @@ module Compile (P : CompileArg) = struct
     fprintf fmt "digraph bdd {@\n";
     let visited = H1.create 1024 in
     let rec visit b =
-      if not (H1.mem visited b) then begin
-        H1.add visited b ();
-        match MLBDD.inspectb b with
-        | BFalse ->
-          fprintf fmt "%d [shape=box label=\"0\"];" (MLBDD.id b)
-        | BTrue ->
-          fprintf fmt "%d [shape=box label=\"1\"];" (MLBDD.id b)
-        | BIf (l, v, h) ->
-          (* add_rank v b; *)
-          fprintf fmt "%d [label=\"x%a\"];" (MLBDD.id b) (Provable.pp_timed_atom Item.pp) (legend.(v-1));
-          fprintf fmt "%d -> %d;@\n" (MLBDD.id b) (MLBDD.id h);
-          fprintf fmt "%d -> %d [style=\"dashed\"];@\n" (MLBDD.id b) (MLBDD.id l);
-          visit h; visit l
-      end
+      if not (H1.mem visited b) then
+        begin
+          H1.add visited b ();
+          match MLBDD.inspectb b with
+          | BFalse ->
+            fprintf fmt "%d [shape=box label=\"0\"];" (MLBDD.id b)
+          | BTrue ->
+            fprintf fmt "%d [shape=box label=\"1\"];" (MLBDD.id b)
+          | BIf (l, v, h) ->
+            (* add_rank v b; *)
+            fprintf fmt "%d [label=\"x%a\"];" (MLBDD.id b) (Provable.pp_timed_atom Item.pp) (legend.(v - 1));
+            fprintf fmt "%d -> %d;@\n" (MLBDD.id b) (MLBDD.id h);
+            fprintf fmt "%d -> %d [style=\"dashed\"];@\n" (MLBDD.id b) (MLBDD.id l);
+            visit h;
+            visit l
+        end
     in
     visit b;
     fprintf fmt "}@.";
     close_out c
-
 end
 
 let parse_file (filename : String.t) =
@@ -262,30 +279,34 @@ let parse_file (filename : String.t) =
   let accumulate_range prog = function
     | Grammar.RangeDecl (item, range_expr) ->
       let locs = interp_range_expression prog range_expr in
-      let range = {RangeConstraint.scrutinee=item; range=locs} in
-      { prog with
+      let range = { RangeConstraint.scrutinee = item; range = locs } in
+      {
+        prog with
         pool = (item, 1) :: prog.pool;
         locations = locs @ prog.locations;
         range_constraints = range :: prog.range_constraints;
       }
     | Grammar.RangeDef (ident, range_expr) ->
       let locs = interp_range_expression prog range_expr in
-      { prog with
+      {
+        prog with
         range_definitions = StringMap.add ident locs prog.range_definitions;
       }
   in
   let convert_atom = function
-    | Grammar.Have item -> Atom.Have(item, 1)
+    | Grammar.Have item -> Atom.Have (item, 1)
     | Grammar.Reach loc -> Atom.Reach loc
   in
   let accumulate_rule prog (goal, requires) =
     let clause =
       let open Clause in
-      { goal = convert_atom goal;
+      {
+        goal = convert_atom goal;
         requires = List.map convert_atom requires;
       }
     in
-    { prog with
+    {
+      prog with
       logic = clause :: prog.logic;
     }
   in
@@ -293,7 +314,7 @@ let parse_file (filename : String.t) =
      should have an authoritative list of locations in the logic
      file. *)
   let uniquise_locations prog =
-    let uniquise = CCList.sort_uniq ~cmp:CCString.compare in
+    let uniquise = CCList.sort_uniq ~cmp: CCString.compare in
     { prog with locations = uniquise prog.locations }
   in
   match Parser.MenhirInterpreter.loop supplier starting_point with
@@ -303,15 +324,16 @@ let parse_file (filename : String.t) =
         List.fold_left accumulate_range prog rs
       | Grammar.Rules rs ->
         List.fold_left accumulate_rule prog rs
-      | Grammar.Goal g -> { prog with goal=convert_atom g }
+      | Grammar.Goal g -> { prog with goal = convert_atom g }
     in
     let raw_program =
-      List.fold_left act { goal=(Reach "Dummy land"); pool=[]; locations=[]; range_constraints=[]; range_definitions=StringMap.empty; logic=[] } sections
+      List.fold_left act { goal = (Reach "Dummy land"); pool = []; locations = []; range_constraints = []; range_definitions = StringMap.empty; logic = [] } sections
     in
     let computed_program = uniquise_locations raw_program in
     let _ = Logs.debug (fun m -> m "%a." pp_program computed_program) in
     computed_program
-  | exception Grammar.ParseError (Some (startp, endp), msg) -> (* XXX: partial pattern matching!! *)
+  | exception Grammar.ParseError (Some (startp, endp), msg) ->
+    (* XXX: partial pattern matching!! *)
     let format_pos fmt p =
       let open Lexing in
       Format.fprintf fmt "%i: %i" p.pos_lnum (p.pos_cnum - p.pos_bol)
@@ -330,7 +352,7 @@ let _ =
     type t = int (* XXX: ints might not be enough *)
 
     let zero = 0
-    let (+) = (+)
+    let ( + ) = ( + )
 
     let the_count_for_one = 1
 
@@ -339,14 +361,13 @@ let _ =
   let module Vars = struct
     type t = int
 
-    let the_vars = Array.mapi (fun i _ -> i+1) legend
+    let the_vars = Array.mapi (fun i _ -> i + 1) legend
 
     let pp fmt i =
       Format.fprintf fmt "%a" Comp.Phase.Mult.L.pp legend.(i)
-
   end in
   let module Z = Zdd.Make(Params)(Vars) in
   let _ = Logs.debug (fun m -> m "Done producing the bdd. Converting to zdd") in
   let zdd = Z.of_bdd bdd in
   let _ = Logs.debug (fun m -> m "Done converting to zdd. Printing to dot") in
-  Z.print_to_dot ~file:"example.dot" zdd
+  Z.print_to_dot ~file: "example.dot" zdd

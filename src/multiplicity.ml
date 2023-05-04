@@ -45,27 +45,26 @@ module type Literal = sig
 
   (* XXX: Maybe what I really want is finitely supported functions of
      sorts. But I'll deal with maps explicitly for the time being. *)
-  module Map : Map.S with type key = t
-
+  module Map: Map.S with type key = t
 end
 
-module PseudoBoolean (A:Literal) = struct
+module PseudoBoolean (A: Literal) = struct
 
   type scaled = S of int * A.t
-    (* Internal. Invariant: the coefficient is always strictly positive. *)
+  (* Internal. Invariant: the coefficient is always strictly positive. *)
 
-  let coefficient = fun (S(coeff, _)) -> coeff
-  let variable = fun (S(_, var)) -> var
+  let coefficient = fun (S (coeff, _)) -> coeff
+  let variable = fun (S (_, var)) -> var
 
   let mk_scaled i l =
-    if i > 0 then Some(0, S(i,l))
-    else if i < 0 then Some(i, S(-i, A.neg l)) (* we replace `x` by `1 - ¬x` *)
+    if i > 0 then Some (0, S (i, l))
+    else if i < 0 then Some (i, S (-i, A.neg l)) (* we replace `x` by `1 - ¬x` *)
     else (* if i=0 *) None
 
   (* Something like: 2*x + 7*y ⩾ 3 *)
   type clause = {
     linear_combination: scaled list;
-    constant : int
+    constant: int
   }
 
   module Expr = struct
@@ -74,11 +73,12 @@ module PseudoBoolean (A:Literal) = struct
     (* Invariant: all the keys are “normalised” (that is there is a
        single key for x and ¬x) *)
 
-    let var l = match A.norm l with
-    | (v, Msat__Solver_intf.Same_sign) ->
-      ((A.Map.singleton v 1), 0)
-    | (v, Msat__Solver_intf.Negated) ->
-      ((A.Map.singleton v (-1)), 1) (* ¬x is encoded as (1-x) *)
+    let var l =
+      match A.norm l with
+      | (v, Msat__Solver_intf.Same_sign) ->
+        ((A.Map.singleton v 1), 0)
+      | (v, Msat__Solver_intf.Negated) ->
+        ((A.Map.singleton v (-1)), 1) (* ¬x is encoded as (1-x) *)
     let const n = (A.Map.empty, n)
     let m2c = function
       | Some i -> i
@@ -90,48 +90,47 @@ module PseudoBoolean (A:Literal) = struct
           type 'a t = int * 'a
           let return x = (0, x)
           let map f (i, x) = (i, f x)
-          let (>>=) (i, x) f =
+          let ( >>= ) (i, x) f =
             let (j, y) = f x in
-            (i+j, y)
+            (i + j, y)
         end in
         let module Summing = OSeq.Traverse(Sum) in
-        e |> A.Map.to_seq |> Seq.filter_map (fun (l,i) -> mk_scaled i l) |> Summing.sequence_m |> Sum.map List.of_seq
+        e |> A.Map.to_seq |> Seq.filter_map (fun (l, i) -> mk_scaled i l) |> Summing.sequence_m |> Sum.map List.of_seq
       in
-      let constant = (-n)-leftover in
+      let constant = (-n) - leftover in
       { linear_combination; constant }
 
-    let merge_expr ( * ) (e1,n1) (e2,n2) =
-      (A.Map.merge (fun _ l r -> Some ((m2c l) * (m2c r))) e1 e2, n1*n2)
+    let merge_expr ( * ) (e1, n1) (e2, n2) =
+      (A.Map.merge (fun _ l r -> Some ((m2c l) * (m2c r))) e1 e2, n1 * n2)
     (* Note: I'm not caring too much about 0s here. It should be ok,
        because I never care about equality of exprs. So I let the 0s
        linger around, but I'll remove them when I create a clause. *)
 
-    let (+) e1 e2 = merge_expr (+) e1 e2
-    let (-) e1 e2 = merge_expr (-) e1 e2
-    let ( * ) k (e,n) = (A.Map.map (fun x -> k*x) e, k*n)
+    let ( + ) e1 e2 = merge_expr ( + ) e1 e2
+    let ( - ) e1 e2 = merge_expr ( - ) e1 e2
+    let ( * ) k (e, n) = (A.Map.map (fun x -> k * x) e, k * n)
 
-    let (>=) e1 e2 = greater_than_or_equal_to_zero (e1 - e2)
-    let (<=) e1 e2 = e2 >= e1
-    let (>) e1 e2 = e1 >= (e2 + const 1)
-    let (<) e1 e2 = e2 > e1
+    let ( >= ) e1 e2 = greater_than_or_equal_to_zero (e1 - e2)
+    let ( <= ) e1 e2 = e2 >= e1
+    let ( > ) e1 e2 = e1 >= (e2 + const 1)
+    let ( < ) e1 e2 = e2 > e1
   end
-
 
   let sum_of_coefficients (c : clause) : int =
     c.linear_combination
     |> List.to_seq
     |> Seq.map coefficient
-    |> Seq.fold_left (+) 0
-
+    |> Seq.fold_left ( + ) 0
 
   (** [pop_0 c] is the clause obtained from [c] by setting the first
       variable to 0, the variable is also returned
       (normalised). Precondition: [c] is not empty. *)
   let pop_0 (c : clause) : (A.t * clause) =
     match c.linear_combination with
-    | S(coeff,lit)::lc_rest ->
-      let (var,sign) = A.norm lit in
-      begin match sign with
+    | S (coeff, lit) :: lc_rest ->
+      let (var, sign) = A.norm lit in
+      begin
+        match sign with
         | Msat__Solver_intf.Negated ->
           (* coeff*¬var + lc_rest ⩾ c.constant *)
           var, { linear_combination = lc_rest; constant = c.constant - coeff }
@@ -146,9 +145,10 @@ module PseudoBoolean (A:Literal) = struct
       (normalised). Precondition: [c] is not empty. *)
   let pop_1 (c : clause) : (A.t * clause) =
     match c.linear_combination with
-    | S(coeff,lit)::lc_rest ->
-      let (var,sign) = A.norm lit in
-      begin match sign with
+    | S (coeff, lit) :: lc_rest ->
+      let (var, sign) = A.norm lit in
+      begin
+        match sign with
         | Msat__Solver_intf.Negated ->
           (* coeff*¬var + lc_rest ⩾ c.constant *)
           var, { linear_combination = lc_rest; constant = c.constant }
@@ -189,7 +189,7 @@ module PseudoBoolean (A:Literal) = struct
            variable. *)
         let (_var, fls) = pop_0 c in (* XXX: put var, in an array of sorts. *)
         let (_, tru) = pop_1 c in
-        MLBDD.ite (clause_to_bdd fls (count+1)) count (clause_to_bdd tru (count+1))
+        MLBDD.ite (clause_to_bdd fls (count + 1)) count (clause_to_bdd tru (count + 1))
     in
     (* /!\ It's a bit delicate: we are reconstructing the mapping from
        numbers to variable which was deduced during the loop. Maybe we
@@ -202,20 +202,20 @@ module PseudoBoolean (A:Literal) = struct
     let mk_ite b t f =
       let open Tseitin in
       let b' = make_atom b in
-      make_and [
-        make_imply b' t;
-        make_imply (make_not b') f
-      ]
+      make_and
+        [
+          make_imply b' t;
+          make_imply (make_not b') f
+        ]
     in
     let (legend, bdd) = clause_to_bdd c in
     let mk_node = function
       | MLBDD.BFalse -> Tseitin.f_false
       | MLBDD.BTrue -> Tseitin.f_true
-      | MLBDD.BIf(f,v,t) -> mk_ite (legend.(v)) f t
+      | MLBDD.BIf (f, v, t) -> mk_ite (legend.(v)) f t
     in
     MLBDD.foldb mk_node bdd
 end
-
 
 module type AtomsWithMults = sig
 
@@ -241,15 +241,14 @@ module type AtomsWithMults = sig
   (* module AtomMap : Map.S with type key = t
    *
    * val quantities : int AtomMap.t *)
-
 end
 
-module Make (A : AtomsWithMults) = struct
+module Make (A: AtomsWithMults) = struct
 
   type atom =
     | Individual of A.t
     | Fresh of bool * string * int
-    (* The string is some human-entered name, for provenance, and the
+  (* The string is some human-entered name, for provenance, and the
        int, is the warranty of freshness.
        Boolean: [false] if negated *)
 
@@ -262,11 +261,12 @@ module Make (A : AtomsWithMults) = struct
       let () = incr gen_sym in
       Fresh (false, s, next)
 
-  module L : Literal with type t = atom = struct
+  module L: Literal with type t = atom = struct
 
     type t = atom
 
-    let equal a b = match a, b with
+    let equal a b =
+      match a, b with
       | Individual a, Individual b -> A.equal a b
       | Fresh (na, sa, ia), Fresh (nb, sb, ib) -> na = nb && sa = sb && ia == ib
       | _ -> false
@@ -287,7 +287,7 @@ module Make (A : AtomsWithMults) = struct
 
     let norm = function
       | Individual a ->
-        let (a',n) = A.norm a in
+        let (a', n) = A.norm a in
         (Individual a', n)
       | Fresh (na, _, _) as a ->
         if na then (a, Same_sign)
@@ -296,13 +296,14 @@ module Make (A : AtomsWithMults) = struct
     let fresh () = fresh "m"
 
     module Map = Map.Make(struct
-        type nonrec t = t
-        let compare a b = match a, b with
-          | Individual a, Individual b -> A.compare a b
-          | Individual _, _ -> 1
-          | _, Individual _ -> -1
-          | Fresh(na, sa, ia), Fresh(nb, sb, ib) ->
-            CCOrd.(triple bool string int) (na, sa, ia) (nb, sb, ib)
+      type nonrec t = t
+      let compare a b =
+        match a, b with
+        | Individual a, Individual b -> A.compare a b
+        | Individual _, _ -> 1
+        | _, Individual _ -> -1
+        | Fresh (na, sa, ia), Fresh (nb, sb, ib) ->
+          CCOrd.(triple bool string int) (na, sa, ia) (nb, sb, ib)
     end)
   end
 
@@ -311,7 +312,8 @@ module Make (A : AtomsWithMults) = struct
   let compile (p : A.u list list) : atom list list =
     let compile_literal (l : A.u) : I.Tseitin.t =
       let (l, n) = A.norm_u l in
-      let restore_negation f = match n with
+      let restore_negation f =
+        match n with
         | Msat.Negated -> I.Tseitin.make_not f
         | Msat.Same_sign -> f
       in
@@ -320,9 +322,9 @@ module Make (A : AtomsWithMults) = struct
         | [single], 1 ->
           I.Tseitin.make_atom (Individual single)
         | individuals, num ->
-          let sum = List.fold_left I.Expr.(+) (I.Expr.const 0) in
-          I.mk_sat @@
-          I.Expr.(sum (List.map (fun i -> var (Individual i)) individuals) >= const num)
+          let sum = List.fold_left I.Expr.( + ) (I.Expr.const 0) in
+          I.mk_sat
+          @@ I.Expr.(sum (List.map (fun i -> var (Individual i)) individuals) >= const num)
       in
       restore_negation positive
     in
@@ -333,5 +335,4 @@ module Make (A : AtomsWithMults) = struct
       |> I.Tseitin.make_cnf
     in
     CCList.flat_map compile_clause p
-
 end

@@ -61,33 +61,35 @@ let map_timed f = function
   | Selection a -> Selection (f a)
 
 let hash h = function
-  | Action (name,t) -> CCHash.(combine3 (int 0) (string name) (int t))
-  | At (a,t) -> CCHash.(combine3 (int 1) (h a) (int t))
+  | Action (name, t) -> CCHash.(combine3 (int 0) (string name) (int t))
+  | At (a, t) -> CCHash.(combine3 (int 1) (h a) (int t))
   | Selection a -> CCHash.(combine2 (int 2) (h a))
 
-let equal equal_atom t u = match t, u with
-  | Action (namet,tt), Action(nameu,tu) -> CCString.equal namet nameu && CCInt.equal tt tu
-  | At(at,tt), At(au,tu) -> equal_atom at au && CCInt.equal tt tu
+let equal equal_atom t u =
+  match t, u with
+  | Action (namet, tt), Action (nameu, tu) -> CCString.equal namet nameu && CCInt.equal tt tu
+  | At (at, tt), At (au, tu) -> equal_atom at au && CCInt.equal tt tu
   | Selection at, Selection au -> equal_atom at au
   | _ -> false
 
-let compare compare_atom t u = match t, u with
-  | Action (namet,tt), Action(nameu,tu) -> CCOrd.(string namet nameu <?> (int, tt, tu))
+let compare compare_atom t u =
+  match t, u with
+  | Action (namet, tt), Action (nameu, tu) -> CCOrd.(string namet nameu <?> (int, tt, tu))
   | Action _, _ -> -1
   | _, Action _ -> 1
-  | At(at,tt), At(au,tu) -> CCOrd.(compare_atom at au <?> (int, tt, tu))
+  | At (at, tt), At (au, tu) -> CCOrd.(compare_atom at au <?> (int, tt, tu))
   | At _, _ -> -1
   | _, At _ -> 1
   | Selection at, Selection au -> compare_atom at au
-  (* | Selection _, _ -> -1
+(* | Selection _, _ -> -1
    * | _, Selection _ -> 1 *)
 
 let pp_timed_atom pp_atom fmt = function
   | Selection a -> pp_atom fmt a
-  | At(a,i) -> Format.fprintf fmt "%a @@%i" pp_atom a i
+  | At (a, i) -> Format.fprintf fmt "%a @@%i" pp_atom a i
   | Action (n, i) -> Format.fprintf fmt "%s @@%i" n i
 
-module MakeTimed(A:Types.Type) = struct
+module MakeTimed (A: Types.Type) = struct
 
   module Core = struct
     type t = A.t timed
@@ -103,13 +105,12 @@ module MakeTimed(A:Types.Type) = struct
 
   module Set = Set.Make(Core)
   module Map = Map.Make(Core)
-
 end
 
 (* XXX: how many copies of StringSet is there? *)
-module StringSet = Set.Make(struct type t=string let compare=String.compare end)
+module StringSet = Set.Make(struct type t = string let compare = String.compare end)
 
-module Make (M : Map.S) = struct
+module Make (M: Map.S) = struct
 
   type atom = M.key
   type formula = atom timed Formula.t
@@ -122,48 +123,49 @@ module Make (M : Map.S) = struct
 
   module type Params = sig
     val selection : atom -> bool
-    val timed : StringSet.t M.t (* XXX: timed in an obsolete names, it is really the collection of conclusion of rules. *)
+    val timed : StringSet.t M.t
+    (* XXX: timed in an obsolete names, it is really the collection of conclusion of rules. *)
     val max_steps : int
   end
 
-  module MainLoop (P : Params) = struct
+  module MainLoop (P: Params) = struct
 
-    let at (i:int) (a : atom) : formula =
-      if not (P.selection a) then Formula.var @@ At(a,i)
+    let at (i : int) (a : atom) : formula =
+      if not (P.selection a) then Formula.var @@ At (a, i)
       else Formula.var @@ Selection a
 
-    let action_var (i:int) (name : string) : formula =
-      Formula.var @@ Action (name,i)
+    let action_var (i : int) (name : string) : formula =
+      Formula.var @@ Action (name, i)
 
-    let name (i:int) (clause : atom clause) : formula =
+    let name (i : int) (clause : atom clause) : formula =
       action_var i clause.name
 
     let steps : int Seq.t = OSeq.(0 --^ P.max_steps)
 
-    let action (i:int) (clause : atom clause) : formula =
+    let action (i : int) (clause : atom clause) : formula =
       let open Formula in
-      name i clause --> ((not (at i clause.concl)) && (conj_map (at i) clause.hyps) && at (i+1) clause.concl)
+      name i clause --> ((not (at i clause.concl)) && (conj_map (at i) clause.hyps) && at (i + 1) clause.concl)
 
-    let frames (i:int) : formula Seq.t =
-      let one_frame (i:int) (a:atom) : formula =
+    let frames (i : int) : formula Seq.t =
+      let one_frame (i : int) (a : atom) : formula =
         let open Formula in
-        let changed = not (at i a) && at (i+1) a in
+        let changed = not (at i a) && at (i + 1) a in
         let must_activate =
           disj_map_seq (action_var i) (StringSet.to_seq (M.find a P.timed))
         in
-        changed--> must_activate
+        changed --> must_activate
       in
       M.to_seq P.timed |> Seq.map fst |> Seq.map (one_frame i)
 
-    let monotonicity (i:int) : formula Seq.t =
-      let one_monotonicity (i:int) (a:atom) : formula =
+    let monotonicity (i : int) : formula Seq.t =
+      let one_monotonicity (i : int) (a : atom) : formula =
         let open Formula in
-        at i a --> at (i+1) a
+        at i a --> at (i + 1) a
       in
       M.to_seq P.timed |> Seq.map fst |> Seq.map (one_monotonicity i)
 
-    let maximalisation (i:int) (c:atom clause) : formula =
-      Formula.((conj_map (at i) c.hyps && not (at i c.concl))--> name i c)
+    let maximalisation (i : int) (c : atom clause) : formula =
+      Formula.((conj_map (at i) c.hyps && not (at i c.concl)) --> name i c)
   end
 
   let convert (prog : atom program) (selection : atom -> bool) : formula Seq.t =
@@ -180,45 +182,53 @@ module Make (M : Map.S) = struct
       List.fold_left (fun acc c -> add_add c.concl c.name acc) M.empty (prog.clauses)
     in
     let max_steps = List.length (prog.clauses) in
-    let module L = MainLoop (struct let timed=timed let max_steps=max_steps let selection=selection end) in
+    let module L = MainLoop(struct let timed = timed let max_steps = max_steps let selection = selection end) in
     let initial_state =
-      Formula.conj_seq begin
-        M.to_seq timed
-        |> Seq.map fst
-        |> Seq.map (fun a -> Formula.(not (var (At(a,0)))))
-      end
+      Formula.conj_seq
+        begin
+          M.to_seq timed
+          |> Seq.map fst
+          |> Seq.map (fun a -> Formula.(not (var (At (a, 0)))))
+        end
     in
     let goal =
-      Formula.disj_seq begin
-        let open OSeq in
-        0--max_steps >>= fun i ->
-        return @@ Formula.var (At(prog.goal,i))
-      end
+      Formula.disj_seq
+        begin
+          let open OSeq in
+          0 -- max_steps
+          >>= fun i ->
+            return @@ Formula.var (At (prog.goal, i))
+        end
     in
     let steps : int Seq.t = OSeq.(0 --^ max_steps) in
     let r =
-    OSeq.flatten @@ OSeq.of_list [
-      OSeq.return initial_state;
-      OSeq.return goal;
-      begin
-        let open OSeq in
-        steps >>= fun i ->
-          OSeq.append
-            begin List.to_seq prog.clauses >>= fun c ->
-              OSeq.of_list [
-                L.maximalisation i c;
-                L.action i c;
-              ]
-            end
-            begin
+      OSeq.flatten
+      @@ OSeq.of_list
+        [
+          OSeq.return initial_state;
+          OSeq.return goal;
+          begin
+            let open OSeq in
+            steps
+            >>= fun i ->
               OSeq.append
-                (L.monotonicity i)
-                (L.frames i)
-            end
-      end;
-    ]
+                begin
+                  List.to_seq prog.clauses
+                  >>= fun c ->
+                    OSeq.of_list
+                      [
+                        L.maximalisation i c;
+                        L.action i c;
+                      ]
+                end
+                begin
+                  OSeq.append
+                    (L.monotonicity i)
+                    (L.frames i)
+                end
+          end;
+        ]
     in
     let _ = Logs.debug (fun m -> m "Done converting@.") in
     r
-
 end

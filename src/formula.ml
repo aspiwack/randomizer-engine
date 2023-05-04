@@ -10,16 +10,16 @@ type 'a t =
 let one = One
 let zero = Zero
 let var x = Var x
-let (&&) x y = And(x,y)
-let (||) x y = Or(x,y)
+let ( && ) x y = And (x, y)
+let ( || ) x y = Or (x, y)
 let not x = Not x
-let (-->) x y = Impl(x,y)
-let (<-->) x y = (x --> y) && (y --> x)
+let ( --> ) x y = Impl (x, y)
+let ( <--> ) x y = (x --> y) && (y --> x)
 
-let conj l = List.fold_left (&&) one l
-let disj l = List.fold_left (||) zero l
-let conj_seq l = Seq.fold_left (&&) one l
-let disj_seq l = Seq.fold_left (||) zero l
+let conj l = List.fold_left ( && ) one l
+let disj l = List.fold_left ( || ) zero l
+let conj_seq l = Seq.fold_left ( && ) one l
+let disj_seq l = Seq.fold_left ( || ) zero l
 
 let conj_map f l = conj (List.map f l)
 let disj_map f l = disj (List.map f l)
@@ -30,9 +30,9 @@ let rec vars = function
   | One -> Seq.empty
   | Zero -> Seq.empty
   | Var x -> OSeq.return x
-  | And (x,y) -> Seq.flat_map vars (List.to_seq [x;y])
-  | Or (x,y) -> Seq.flat_map vars (List.to_seq [x;y])
-  | Impl (x,y) -> Seq.flat_map vars (List.to_seq [x;y])
+  | And (x, y) -> Seq.flat_map vars (List.to_seq [x; y])
+  | Or (x, y) -> Seq.flat_map vars (List.to_seq [x; y])
+  | Impl (x, y) -> Seq.flat_map vars (List.to_seq [x; y])
   | Not x -> vars x
 
 let pp pp_var fmt f =
@@ -46,9 +46,9 @@ let pp pp_var fmt f =
     | One -> Format.fprintf fmt "1"
     | Zero -> Format.fprintf fmt "0"
     | Var x -> pp_var fmt x
-    | And (x,y) when prec <= and_prec -> Format.fprintf fmt "%t && %t" (pp and_prec x) (pp and_prec y)
-    | Or (x,y) when prec <= or_prec -> Format.fprintf fmt "%t || %t" (pp or_prec x) (pp or_prec y)
-    | Impl (x,y) when prec <= impl_prec -> Format.fprintf fmt "%t --> %t" (pp (impl_prec+1)x) (pp impl_prec y)
+    | And (x, y) when prec <= and_prec -> Format.fprintf fmt "%t && %t" (pp and_prec x) (pp and_prec y)
+    | Or (x, y) when prec <= or_prec -> Format.fprintf fmt "%t || %t" (pp or_prec x) (pp or_prec y)
+    | Impl (x, y) when prec <= impl_prec -> Format.fprintf fmt "%t --> %t" (pp (impl_prec + 1) x) (pp impl_prec y)
     | Not x when prec <= not_prec -> Format.fprintf fmt "~%t" (pp not_prec x)
     | f -> paren f fmt
   and paren f fmt =
