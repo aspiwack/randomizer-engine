@@ -18,9 +18,10 @@
     flake-utils.url = "github:numtide/flake-utils";
     nixpkgs.follows = "opam-nix/nixpkgs";
     topiary.url = "github:tweag/topiary";
+    pre-commit-hooks.url = "github:cachix/pre-commit-hooks.nix";
   };
 
-  outputs = { self, flake-utils, opam-nix, nixpkgs, topiary }@inputs:
+  outputs = { self, flake-utils, opam-nix, nixpkgs, topiary, pre-commit-hooks }@inputs:
     let package = "randomizer-engine";
     in flake-utils.lib.eachDefaultSystem (system:
       let
@@ -53,6 +54,12 @@
         # Packages from devPackagesQuery
         devPackages = builtins.attrValues
           (pkgs.lib.getAttrs (builtins.attrNames devPackagesQuery) scope');
+        precommit = pre-commit-hooks.lib.${system}.run {
+            src = ./.;
+            hooks = {
+              topiary = pkgs.lib.mkForce (topiary.lib.${system}.pre-commit-hook);
+            };
+        };
       in {
         legacyPackages = scope';
 
@@ -69,6 +76,9 @@
             # pkgs.topiary
             topiary.packages.${system}.default
           ];
+
+          # sets up the pre-commit hooks upon entering the dev shell
+          inherit (precommit) shellHook;
         };
       });
 }
