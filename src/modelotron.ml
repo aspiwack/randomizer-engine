@@ -121,9 +121,7 @@ module type EXSAT = sig
 
   module Literal: Literal
 
-  val neg : Literal.t -> Literal.t
-
-  type problem = { observed: unit Literal.Map.t; clauses: Literal.t list OSeq.t }
+  type problem = { observed: unit Literal.Map.t; clauses: Literal.t list list }
 
   (** only allowed to refer to observed variables. *)
   type clause = Literal.t list
@@ -134,6 +132,8 @@ module type EXSAT = sig
   val create : problem -> t
   val refuteWith : clause -> t -> unit
 
+  (* An atom can be assigned to true, to false, or unassigned, in
+     which case it's irrelevant to the model. *)
   type model = bool Literal.Map.t
 
   val find : t -> model option
@@ -142,7 +142,57 @@ module type EXSAT = sig
   val refutation_clause : model -> clause
 end
 
-(* TODO: inhabit EXSat. *)
+module EXSatSolver (L: Literal) : EXSAT with module Literal = L = struct
+  module Interface = struct
+    module Formula = L
+    type proof = unit
+  end
+
+  module Sat = Msat.Make_pure_sat(Interface)
+
+  module Literal = L
+
+  type problem = { observed: unit Literal.Map.t; clauses: Literal.t list list }
+
+  type clause = Literal.t list
+
+  type t = { observed: unit Literal.Map.t; state: Sat.t }
+
+  let create { observed; clauses } =
+    let state = Sat.create () in
+    let () = Sat.assume state clauses () in
+    { observed; state }
+
+  let refuteWith clause { state; _ } = Sat.assume state [clause] ()
+
+  type model = bool Literal.Map.t
+
+  let find { observed; state } : model option =
+    match Sat.solve state with
+    | Sat.Sat sat ->
+      let s =
+        let open OSeq in
+        let+ (observed_atom, ()) = Literal.Map.to_seq observed in
+        try
+          let v = sat.eval observed_atom in
+          let _ = Logs.debug (fun m -> m "observe: %a=%b@." L.pp observed_atom v) in
+          Some (observed_atom, v)
+        with
+          | Sat.UndecidedLit ->
+            let _ = Logs.debug (fun m -> m "observe: %a undecided@." L.pp observed_atom) in
+            None
+      in
+      Some (Literal.Map.of_seq @@ OSeq.filter_map Fun.id s)
+    | Sat.Unsat _ -> None
+
+  let refutation_clause model : clause =
+    let open OSeq in
+    List.of_seq
+    @@ let+ (atom, v) = Literal.Map.to_seq model in
+    match v with
+    | true -> atom
+    | false -> Literal.neg atom
+end
 
 module type ModelCounter = sig
 
@@ -240,7 +290,7 @@ module Tseitin (A: Literal) (Solver: EXSAT with module Literal = A) : Reduction 
     in
     let interpreted =
       let (observed, clauses0) = interpreted0 formula in
-      let clauses = List.to_seq @@ MSatTseitin.make_cnf clauses0 in
+      let clauses = MSatTseitin.make_cnf clauses0 in
       Solver.{ observed; clauses }
     in
     let read_back model = Model model in
