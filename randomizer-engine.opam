@@ -22,3 +22,8 @@ depends: [
   "ocaml-lsp-server" {dev}
   "utop" {dev}
 ]
+# temporary while they are getting merged into Opam
+pin-depends: [
+  # https://github.com/ocaml/opam-repository/pull/23754
+  [ "oseq.0.5" "git+https://github.com/c-cube/oseq#14ca0062ca89ebe795f2001b16083fad9c27170b" ]
+]
