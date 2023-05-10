@@ -26,8 +26,8 @@ module type S = sig
   (** A model of a problem. *)
   type model
 
-  (* In my notes I also have a type of solver, but I think I'll only *)
-  (* need it in the full modelotron. *)
+  (* In my notes I also have a type of solver, but I think I'll only
+     need it in the full modelotron / model counter. *)
 end
 
 module type Reduction = sig
@@ -100,19 +100,33 @@ end
 (* let (<.>) (type m) (type r) (type t): (m, r) reduction -> (r, t) reduction *)
 (*             -> ('m,'t) reduction = fun (module R1) (module R2)-> *)
 
+(* XXX: duplicated from multiplicity.ml *)
+module type Literal = sig
+
+  type t
+
+  include Msat__.Solver_intf.FORMULA with type t := t
+
+  val fresh : unit -> t
+
+  (* XXX: Maybe what I really want is finitely supported functions of
+     sorts. But I'll deal with maps explicitly for the time being. *)
+  module Map: Map.S with type key = t
+end
+
 (** ∃SAT, like SAT, but only tracks a subset of the variables (the
     other ones are existentially quantified). Part of the point is
     that the Tseitin transform is model-preserving in ∃SAT. *)
 module type EXSAT = sig
 
-  type literal
+  module Literal: Literal
 
-  val neg : literal -> literal
+  val neg : Literal.t -> Literal.t
 
-  type problem = { observed: literal list; clauses: literal list OSeq.t }
+  type problem = { observed: unit Literal.Map.t; clauses: Literal.t list OSeq.t }
 
   (** only allowed to refer to observed variables. *)
-  type clause = literal list
+  type clause = Literal.t list
 
   (** Solver's state *)
   type t
@@ -120,7 +134,7 @@ module type EXSAT = sig
   val create : problem -> t
   val refuteWith : clause -> t -> unit
 
-  type model
+  type model = bool Literal.Map.t
 
   val find : t -> model option
 
@@ -138,7 +152,11 @@ module type ModelCounter = sig
 
   val enumerate : problem -> model OSeq.t
 
-  (* I suspect that due to the combinatorial aspects of our problem, we are likely to have more than 2^64 models. In this case, of course, exact_model_count will never return; but it's worth using the same time for exact_model_count and its approximate variants. So I may want to use some big integer type. *)
+  (* I suspect that due to the combinatorial aspects of our problem,
+     we are likely to have more than 2^64 models. In this case, of
+     course, exact_model_count will never return; but it's worth using
+     the same time for exact_model_count and its approximate
+     variants. So I may want to use some big integer type. *)
   val exact_model_count : problem -> int
 
   (* TODO: is there a natural ZDD that we could produce to summarise all the models? *)
@@ -172,4 +190,61 @@ module MakeModelCounter (Solver: EXSAT) (R: Reduction with module R = Solver) = 
       end
 
   let exact_model_count prob = OSeq.length (enumerate prob)
+end
+
+module FirstOrder (A: Literal) = struct
+  type problem = A.t Formula.t
+  type clause = A.t list
+  type model = bool A.Map.t
+end
+
+module Tseitin (A: Literal) (Solver: EXSAT with module Literal = A) : Reduction with module M = FirstOrder (A) and module R = Solver = struct
+
+  module M = FirstOrder(A)
+  module R = Solver
+
+  type read_back =
+    | Model of M.model
+    | Refutation of R.clause
+
+  type reduced = {
+    interpreted: R.problem;
+    read_back: R.model -> read_back
+  }
+
+  module MSatTseitin = Msat_tseitin.Make(A)
+
+  let reduce (formula : M.problem) =
+    let union _ _ _ = Some () in
+    let rec interpreted0 =
+      let open MSatTseitin in
+      function
+      | Formula.One -> (A.Map.empty, make_or [])
+      | Formula.Zero -> (A.Map.empty, make_and [])
+      | Formula.Var l -> (A.Map.singleton l (), make_atom l)
+      | Formula.And (r, l) ->
+        let (obsr, r') = interpreted0 r in
+        let (obsl, l') = interpreted0 l in
+        (A.Map.merge union obsr obsl, make_and [r'; l'])
+      | Formula.Or (r, l) ->
+        let (obsr, r') = interpreted0 r in
+        let (obsl, l') = interpreted0 l in
+        (A.Map.merge union obsr obsl, make_or [r'; l'])
+      | Formula.Not f ->
+        let (obs, f') = interpreted0 f in
+        (obs, make_not f')
+      | Formula.Impl (r, l) ->
+        let (obsr, r') = interpreted0 r in
+        let (obsl, l') = interpreted0 l in
+        (A.Map.merge union obsr obsl, make_imply r' l')
+    in
+    let interpreted =
+      let (observed, clauses0) = interpreted0 formula in
+      let clauses = List.to_seq @@ MSatTseitin.make_cnf clauses0 in
+      Solver.{ observed; clauses }
+    in
+    let read_back model = Model model in
+    { interpreted; read_back }
+
+  let translate clause = clause
 end
