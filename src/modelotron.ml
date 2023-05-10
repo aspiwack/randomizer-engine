@@ -264,32 +264,49 @@ module Tseitin (A: Literal) (Solver: EXSAT with module Literal = A) : Reduction 
 
   module MSatTseitin = Msat_tseitin.Make(A)
 
+  (* Let me use effects sparingly. As Ocaml kindly warns me that the
+     API for effect is expected to change in the future. I think this
+     one use-case serves as a nice demonstration, though. *)
+  type _ Effect.t += Observe : A.t -> unit Effect.t
+  let observe atom : unit = Effect.perform (Observe atom)
+
   let reduce (formula : M.problem) =
     let union _ _ _ = Some () in
     let rec interpreted0 =
       let open MSatTseitin in
       function
-      | Formula.One -> (A.Map.empty, make_or [])
-      | Formula.Zero -> (A.Map.empty, make_and [])
-      | Formula.Var l -> (A.Map.singleton l (), make_atom l)
-      | Formula.And (r, l) ->
-        let (obsr, r') = interpreted0 r in
-        let (obsl, l') = interpreted0 l in
-        (A.Map.merge union obsr obsl, make_and [r'; l'])
-      | Formula.Or (r, l) ->
-        let (obsr, r') = interpreted0 r in
-        let (obsl, l') = interpreted0 l in
-        (A.Map.merge union obsr obsl, make_or [r'; l'])
-      | Formula.Not f ->
-        let (obs, f') = interpreted0 f in
-        (obs, make_not f')
-      | Formula.Impl (r, l) ->
-        let (obsr, r') = interpreted0 r in
-        let (obsl, l') = interpreted0 l in
-        (A.Map.merge union obsr obsl, make_imply r' l')
+      | Formula.One -> make_or []
+      | Formula.Zero -> make_and []
+      | Formula.Var atom -> let () = observe atom in make_atom atom
+      | Formula.And (r, l) -> make_and [interpreted0 r; interpreted0 l]
+      | Formula.Or (r, l) -> make_or [interpreted0 r; interpreted0 l]
+      | Formula.Not f -> make_not (interpreted0 f)
+      | Formula.Impl (r, l) -> make_imply (interpreted0 r) (interpreted0 l)
+    in
+    let interpreted1 formula =
+      let open Effect.Shallow in
+      let gather =
+        let rec gatherOn observed =
+          {
+            retc = (fun x -> (observed, x));
+            exnc = raise;
+            effc = fun(type a) (eff : a Effect.t) ->
+              match eff with
+              | Observe atom ->
+                Some
+                  begin
+                    fun (k : (a, _) continuation) ->
+                      continue_with k () (gatherOn (A.Map.add atom () observed))
+                  end
+              | _ -> None
+          }
+        in
+        gatherOn A.Map.empty
+      in
+      continue_with (fiber interpreted0) formula gather
     in
     let interpreted =
-      let (observed, clauses0) = interpreted0 formula in
+      let (observed, clauses0) = interpreted1 formula in
       let clauses = MSatTseitin.make_cnf clauses0 in
       Solver.{ observed; clauses }
     in
