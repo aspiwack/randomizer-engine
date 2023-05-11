@@ -1,0 +1,5 @@
+(library
+ (name re_effects)
+ (public_name randomizer-engine.effects)
+ (libraries oseq containers)
+ (flags :standard -warn-error -a))
