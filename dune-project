@@ -1,4 +1,4 @@
-(lang dune 1.10)
+(lang dune 3.7)
 (using menhir 2.0)
 (generate_opam_files true)
 ;; Project description
