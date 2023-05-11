@@ -128,4 +128,6 @@ module Make (T: Type) = struct
                 end
             | _ -> None
         }
+
+  let to_seq gen = OSeq.of_gen (to_gen gen)
 end
