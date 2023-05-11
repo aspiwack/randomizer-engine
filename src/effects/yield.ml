@@ -76,4 +76,28 @@ module Make (T: Type) = struct
     Effect.Deep.match_with gen () (Handler.iter f)
 
   let to_iter gen f = iter f gen
+
+  exception Gen of T.t option
+
+  let to_gen seq =
+    let open Effect.Shallow in
+    let state = ref (fiber seq) in
+    fun () ->
+      continue_with
+        (!state)
+        ()
+        {
+          retc = (fun () -> None);
+          exnc = raise;
+          effc = fun(type a) (eff : a Effect.t) ->
+            match eff with
+            | Yield a ->
+              Some
+                begin
+                  fun (k : (a, _) continuation) ->
+                    let () = state := k in
+                    Some a
+                end
+            | _ -> None
+        }
 end
