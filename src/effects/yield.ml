@@ -77,11 +77,39 @@ module Make (T: Type) = struct
 
   let to_iter gen f = iter f gen
 
-  exception Gen of T.t option
+  (* Passed to continuation to discard them cleanly. *)
+  exception Unwind
 
+  (* Unrolls a continuation while respecting the invariant that the
+     continuation must be consumed. *)
+  let discard r =
+    let open Effect.Shallow in
+    let rec unwind : 'a 'b. ('a, 'b) continuation -> unit = fun k ->
+        begin
+          try
+            discontinue_with
+              k
+              Unwind
+              {
+                retc = (fun _ -> ());
+                exnc = raise;
+                effc = fun(type a) (eff : a Effect.t) ->
+                  match eff with
+                  | Yield _ -> Some begin fun (k : (a, _) continuation) -> unwind k end
+                  | _ -> None
+              }
+          with
+            | _ -> ()
+        end
+    in
+    unwind !r
+
+  (** Absolutely not thread safe. *)
   let to_gen seq =
     let open Effect.Shallow in
     let state = ref (fiber seq) in
+    (* Makes it possible to freely forget the gen *)
+    let () = Gc.finalise discard state in
     fun () ->
       continue_with
         (!state)
