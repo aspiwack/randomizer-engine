@@ -14,13 +14,18 @@ end
     via a functor. It looks a bit silly for @Yield@, but I anticipate
     that many effects would require more structure of their
     parameters, and will need to be functors so it's quite uniform
-    this way. *)
+    this way.
+
+    The library is voluntarily (and probably necessarily)
+    impoverished: if you need more composition you'll want to convert
+    to a more composable form (Seq/Gen/Iter). *)
 module Make (T: Type) = struct
 
   (** Type of algebraic-effect based generators. They produce values
       with [yield], suspending their computations, and are resumed
-      with algebraic handler. *)
-  type t = unit -> unit
+      with algebraic handler. The return type is a value returned
+      after all the values have been yielded. *)
+  type 'a t = unit -> 'a
 
   type _ Effect.t += Yield : T.t -> unit Effect.t
 
@@ -45,8 +50,30 @@ module Make (T: Type) = struct
               end
           | _ -> None
       }
+
+    let iter f =
+      let open Effect.Deep in
+      {
+        retc = Fun.id;
+        exnc = raise;
+        effc = fun(type b) (eff : b Effect.t) ->
+          match eff with
+          | Yield a ->
+            Some
+              begin
+                fun (k : (b, _) continuation) ->
+                  let () = f a in
+                  continue k ()
+              end
+          | _ -> None
+      }
   end
 
   let fold_left f a gen =
     Effect.Shallow.continue_with (Effect.Shallow.fiber gen) () (Handler.fold_left f a)
+
+  let iter f gen =
+    Effect.Deep.match_with gen () (Handler.iter f)
+
+  let to_iter gen f = iter f gen
 end
